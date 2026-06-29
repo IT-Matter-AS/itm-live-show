@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crowd Visualizer & Control</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #06060a; color: #fff;
+    font-family: system-ui, -apple-system, sans-serif; }
+  body { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+  #grid { flex: 1; width: 100%; background: #000; display: block; min-height: 0; }
+  #bar { flex: none; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px;
+    border-top: 1px solid #ffffff1a; background: #0b0b12; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .tag { font: 700 11px monospace; opacity: .45; width: 52px; text-transform: uppercase; }
+  button { font: 600 12px system-ui; padding: 5px 10px; border: 0; border-radius: 999px;
+    background: #ffffff18; color: #fff; cursor: pointer; }
+  button.on { background: #19ff7a; color: #042; }
+  input[type=range] { width: 90px; vertical-align: middle; }
+  input[type=color] { width: 30px; height: 26px; border: 0; background: none; padding: 0; }
+  input#imgText { font: 600 13px system-ui; padding: 5px 8px; border-radius: 8px;
+    border: 1px solid #ffffff2a; background: #00000040; color: #fff; width: 120px; }
+  label { font: 600 11px system-ui; opacity: .8; display: inline-flex; gap: 4px; align-items: center; }
+  #now { font: 700 13px system-ui; }
+  #now b { color: #19ff7a; }
+</style>
+</head>
+<body>
+  <canvas id="grid"></canvas>
+  <div id="bar">
+    <div id="now"><a href="/host" style="color:#8fd0ff;text-decoration:none">← Host</a> &nbsp;&nbsp; Look: <b id="label">…</b> <span style="opacity:.4;font-weight:400">— these controls drive every connected phone live</span></div>
+    <div class="row"><span class="tag">scene</span><span id="scenes"></span></div>
+    <div class="row"><span class="tag">palette</span><span id="palettes"></span>
+      <input type="color" id="c1" value="#ff2e63"><input type="color" id="c2" value="#2e7bff"><input type="color" id="c3" value="#ffcc00">
+      <button id="useColors">use colors</button>
+    </div>
+    <div class="row"><span class="tag">react</span>
+      <label>bright <input type="range" id="rBright" min="0" max="200" value="100"></label>
+      <label>beat <input type="range" id="rBeat" min="0" max="250" value="100"></label>
+      <label>speed <input type="range" id="rSpeed" min="20" max="300" value="100"></label>
+    </div>
+    <div class="row"><span class="tag">image</span>
+      <input id="imgText" value="HELLO" maxlength="14">
+      <button id="showText">show text</button>
+      <span id="presets"></span>
+    </div>
+  </div>
+  <script type="module" src="/preview.js"></script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Show — Join Screen</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    min-height: 100vh; padding: 4vmin; text-align: center;
+    background: radial-gradient(ellipse at 50% -10%, #241657 0%, #07070c 60%);
+    color: #fff; font-family: system-ui, -apple-system, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: clamp(1rem, 3vh, 2.5rem);
+  }
+  h1 { margin: 0; font-size: clamp(2rem, 6vmin, 5rem); font-weight: 800; letter-spacing: .01em; }
+  h1 .spark { color: #c9a8ff; }
+  .qr-card {
+    background: #fff; border-radius: 4vmin; padding: 3vmin;
+    width: min(46vmin, 78vw); aspect-ratio: 1; display: grid; place-items: center;
+    box-shadow: 0 0 9vmin rgba(150, 110, 255, .45);
+  }
+  .qr-card img { width: 100%; height: 100%; display: block; }
+  .url { font: 600 clamp(1rem, 2.4vmin, 1.6rem) ui-monospace, monospace;
+    background: #ffffff14; padding: .7rem 1.3rem; border-radius: 999px; user-select: all; }
+  .count { font-size: clamp(1.3rem, 4vmin, 3rem); font-weight: 800; }
+  .count b { color: #34d058; font-variant-numeric: tabular-nums; }
+  .row { display: flex; gap: 1rem; }
+  button { font-size: clamp(1rem, 2.2vmin, 1.3rem); padding: .8rem 1.8rem; border: 0;
+    border-radius: 999px; font-weight: 700; cursor: pointer; }
+  #start { background: #34d058; color: #042; }
+  #stop  { background: #ff5c5c; color: #400; }
+  .hint { opacity: .55; font-size: clamp(.8rem, 1.8vmin, 1.1rem); max-width: 42ch; line-height: 1.4; }
+</style>
+</head>
+<body>
+  <h1>Scan to join the show <span class="spark">✨</span></h1>
+  <div class="qr-card"><img id="qr" alt="QR code — scan to join"></div>
+  <div class="url" id="url">…</div>
+  <div class="count"><b id="count">0</b> phones connected</div>
+  <div class="row">
+    <button id="start">▶ Demo beat</button>
+    <button id="stop">■ Stop</button>
+  </div>
+  <div class="hint">
+    Just play your music out loud (Spotify, a live band, anything) — phones listen and pulse in time. No app, no integration.<br>
+    No music handy? <b>Demo beat</b> plays a test beat through this screen's speakers for phones to lock onto.
+  </div>
+  <a href="/preview.html" style="color:#c9a8ff;text-decoration:none;font-weight:700;font-size:1rem">🎨 Open the crowd visualizer &amp; scene control →</a>
+  <a href="/anchor" style="color:#8fd0ff;text-decoration:none;font-weight:700;font-size:1rem">📡 Set up a positioning beacon →</a>
+  <a href="/setup" style="color:#8fd0ff;text-decoration:none;font-weight:700;font-size:1rem">📐 Venue &amp; speaker setup →</a>
+
+  <script type="module" src="/host/host.js"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+{
+  "name": "itm-live-show",
+  "version": "0.1.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "author": "IT Matter",
+  "type": "module",
+  "description": "Turn spectators' phones into a coordinated, music-reactive light show — no app download.",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js",
+    "test": "node test/dsp.test.mjs"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "selfsigned": "^5.5.0",
+    "ws": "^8.18.0"
+  }
+}

@@ -1,0 +1,145 @@
+// show.js — the visual scene engine.
+//
+// Every phone and the /preview grid render the SAME pure functions of
+// (position, shared time, music drive, director directive). The host controls
+// everything by broadcasting one small directive: { scene, palette, react,
+// image, epoch }. No pixels are streamed — each phone renders locally.
+//   palette : a name, an inline {stops:[[h,s,l]...]} (custom colors), or 'auto'
+//   react   : { brightness, beat, speed } knobs (1 = default) shaping the music response
+//   image   : { w, h, cells:[0..1] } low-res grid for the crowd-as-screen 'image' scene
+
+export const DEMO_BPM = 120;
+
+// --- Palettes: [h, s, l] stops, sampled by p in [0..1] ----------------------
+export const PALETTES = {
+  sunset:  [[14, 92, 55], [330, 82, 55], [275, 72, 48]],
+  ocean:   [[185, 85, 52], [205, 88, 50], [250, 72, 42]],
+  fire:    [[2, 95, 52], [22, 96, 54], [46, 97, 56]],
+  neon:    [[305, 96, 60], [185, 96, 56], [260, 92, 62]],
+  rainbow: [[0, 90, 55], [60, 92, 53], [120, 85, 48], [200, 90, 54], [280, 86, 56], [330, 92, 55]],
+  white:   [[210, 25, 100]],
+};
+export const PALETTE_NAMES = Object.keys(PALETTES);
+
+const lerp = (a, b, t) => a + (b - a) * t;
+function paletteStops(palette) {
+  if (palette && typeof palette === 'object' && Array.isArray(palette.stops) && palette.stops.length) return palette.stops;
+  return PALETTES[palette] || PALETTES.sunset;
+}
+function samplePalette(palette, p) {
+  const stops = paletteStops(palette);
+  if (stops.length === 1) return stops[0];
+  p = ((p % 1) + 1) % 1;
+  const x = p * (stops.length - 1);
+  const i = Math.floor(x), f = x - i;
+  const a = stops[i], b = stops[Math.min(stops.length - 1, i + 1)];
+  return [lerp(a[0], b[0], f), lerp(a[1], b[1], f), lerp(a[2], b[2], f)];
+}
+const css = (h, s, l) => `hsl(${h.toFixed(0)} ${Math.max(0, Math.min(100, s)).toFixed(0)}% ${Math.max(3, Math.min(98, l)).toFixed(0)}%)`;
+
+function hash01(nx, ny) {
+  const s = Math.sin(nx * 127.1 + ny * 311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+const beatsAt = (t, bpm, speed) => t * ((bpm || DEMO_BPM) / 60) * (speed || 1);
+
+// --- Scenes: ctx {nx, ny, t, pulse, level, bpm, palette, speed, image} ------
+const SCENE_FNS = {
+  aurora(c) {
+    const p = 0.5 + 0.35 * Math.sin(c.nx * 3.1 + c.t * 0.5 * c.speed) + 0.35 * Math.cos(c.ny * 2.3 - c.t * 0.37 * c.speed);
+    const [h, s, l] = samplePalette(c.palette, p);
+    return [h, s, l * (0.55 + 0.45 * c.level) + c.pulse * 12];
+  },
+  gradient(c) {
+    const [h, s, l] = samplePalette(c.palette, c.nx * 0.75 + c.ny * 0.25 + c.t * 0.02 * c.speed);
+    return [h, s, 12 + l * 0.5 + c.pulse * 55];
+  },
+  wave(c) {
+    const b = beatsAt(c.t, c.bpm, c.speed);
+    const sweep = (b * 0.25) % 1;
+    const band = Math.max(0, 1 - Math.abs(c.nx - sweep) * 4);
+    const [h, s] = samplePalette(c.palette, (c.ny + b * 0.05) % 1);
+    return [h, s, 8 + band * 72 + c.pulse * 18];
+  },
+  strobe(c) {
+    const beat = Math.floor(beatsAt(c.t, c.bpm, c.speed));
+    const [h, s] = samplePalette(c.palette, (beat * 0.137) % 1);
+    return [h, s, 5 + c.pulse * 90];
+  },
+  ripple(c) {
+    const d = Math.hypot(c.nx - 0.5, c.ny - 0.5) / 0.7071;
+    const r = beatsAt(c.t, c.bpm, c.speed) % 1;
+    const ring = Math.max(0, 1 - Math.abs(d - r) * 6);
+    const [h, s, l] = samplePalette(c.palette, d);
+    return [h, s, 8 + ring * 80 + l * 0.05];
+  },
+  sections(c) {
+    const N = 6;
+    const idx = Math.min(N - 1, Math.floor(c.nx * N));
+    const beat = Math.floor(beatsAt(c.t, c.bpm, c.speed));
+    const [h, s, l] = samplePalette(c.palette, ((idx + beat) % N) / N);
+    return [h, s, 18 + l * 0.25 + c.level * 25 + c.pulse * 35];
+  },
+  twinkle(c) {
+    const seed = hash01(c.nx, c.ny);
+    const phase = (seed * 13.0 + c.t * (1.2 + c.level * 2) * c.speed) % 1;
+    const on = phase < 0.06 + c.level * 0.12 ? 1 : 0;
+    const [h, s] = samplePalette(c.palette, seed);
+    return [h, s, 6 + on * 88];
+  },
+  pulse(c) {
+    const [h, s, l] = samplePalette(c.palette, (c.t * 0.05 * c.speed) % 1);
+    return [h, s, 12 + l * 0.2 + c.level * 38 + c.pulse * 45];
+  },
+  // Crowd-as-screen: each phone lights the cell of a low-res image at its
+  // position, so the whole crowd spells text / shows a logo. Needs real
+  // positions to read on a live crowd; perfect in /preview today.
+  image(c) {
+    const img = c.image;
+    if (!img || !img.cells) return samplePalette(c.palette, c.nx);
+    const cx = Math.min(img.w - 1, Math.max(0, Math.floor(c.nx * img.w)));
+    const cy = Math.min(img.h - 1, Math.max(0, Math.floor(c.ny * img.h)));
+    const v = img.cells[cy * img.w + cx] || 0; // 0..1 intensity
+    const [h, s] = samplePalette(c.palette, c.nx); // colorize across the width
+    return [h, s, 5 + v * (72 + c.pulse * 18)];
+  },
+};
+
+// Scenes the auto-director cycles through (image is excluded — it needs content).
+export const SCENES = ['aurora', 'gradient', 'wave', 'strobe', 'ripple', 'sections', 'twinkle', 'pulse'];
+export const ALL_SCENES = [...SCENES, 'image']; // everything selectable in the console
+
+export function render(scene, palette, ctx) {
+  const fn = SCENE_FNS[scene] || SCENE_FNS.pulse;
+  const R = ctx.react || {};
+  ctx.palette = palette ?? 'sunset';
+  ctx.speed = R.speed ?? 1;
+  ctx.pulse = Math.min(1.5, (ctx.pulse || 0) * (R.beat ?? 1)); // beat-punch knob
+  let [h, s, l] = fn(ctx);
+  l *= R.brightness ?? 1;                                       // brightness knob
+  return css(h, s, l);
+}
+
+// Director: directive + shared clock -> the active scene/palette. 'auto' values
+// cycle on the clock so every phone agrees with no per-frame messaging.
+const SCENE_SECS = 18, PALETTE_SECS = 30;
+export function resolveScene(state, tSec) {
+  if (!state) return { scene: 'aurora', palette: 'sunset' };
+  const e = (state.epoch || 0) / 1000;
+  const elapsed = Math.max(0, tSec - e);
+  const scene = state.scene && state.scene !== 'auto'
+    ? state.scene
+    : SCENES[Math.floor(elapsed / SCENE_SECS) % SCENES.length];
+  const palette = state.palette && state.palette !== 'auto'
+    ? state.palette
+    : PALETTE_NAMES[Math.floor(elapsed / PALETTE_SECS) % PALETTE_NAMES.length];
+  return { scene, palette };
+}
+
+// Beat/idle helpers for the host demo-beat fallback drive.
+export function beatEnvelope(dt, period) {
+  if (dt < 0) return 0;
+  const tau = Math.max(0.06, (period || 0.5) * 0.22);
+  return Math.exp(-dt / tau);
+}
+export function idleEnvelope(t) { return 0.22 + 0.16 * Math.sin(t * 1.6); }

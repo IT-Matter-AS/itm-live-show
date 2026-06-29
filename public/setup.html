@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Venue Setup · Live Show</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #07070c; color: #fff; font-family: system-ui, -apple-system, sans-serif; }
+  body { display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 10px 14px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; border-bottom: 1px solid #ffffff14; }
+  h1 { font-size: 1.05rem; margin: 0; }
+  label { font: 600 12px system-ui; opacity: .8; display: inline-flex; gap: 5px; align-items: center; }
+  input { font: 600 13px system-ui; width: 64px; padding: 5px 7px; border-radius: 8px; border: 1px solid #ffffff2a; background: #00000040; color: #fff; }
+  button { font: 700 13px system-ui; padding: 7px 14px; border: 0; border-radius: 999px; cursor: pointer; background: #ffffff1a; color: #fff; }
+  #save { background: #19ff7a; color: #042; }
+  #back { background: #8fd0ff; color: #04263a; text-decoration: none; font-weight: 800; padding: 7px 14px; border-radius: 999px; }
+  #saved { color: #19ff7a; font-weight: 800; font-size: 13px; min-width: 56px; }
+  #map { flex: 1; width: 100%; display: block; min-height: 0; background: #02040a; }
+  .legend { font-size: 12px; opacity: .7; display: flex; gap: 16px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: middle; margin-right: 5px; }
+  .hint { font-size: 12px; opacity: .55; padding: 6px 14px; }
+</style>
+</head>
+<body>
+  <header>
+    <a href="/host" id="back">← Host</a>
+    <h1>📐 Venue setup</h1>
+    <label>width m <input id="w" type="number" step="1" value="10"></label>
+    <label>depth m <input id="h" type="number" step="1" value="7"></label>
+    <button id="clear">clear speakers</button>
+    <button id="save">save &amp; broadcast</button>
+    <span id="saved"></span>
+    <span class="legend"><span><span class="dot" style="background:#3a8bff"></span>PA speaker (click map)</span><span><span class="dot" style="background:#19ff7a"></span>beacon (live)</span></span>
+  </header>
+  <canvas id="map"></canvas>
+  <div class="hint">Click the map to add a PA speaker; click a speaker to remove it. Speakers let phones compensate sound travel time so the whole crowd locks to the beat. Beacons appear here as they come online (open <b>/anchor</b> on spare devices).</div>
+  <script type="module" src="/setup.js"></script>
+</body>
+</html>

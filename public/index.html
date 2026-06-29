@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Live Show</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden;
+    font-family: system-ui, -apple-system, sans-serif; }
+  #stage { position: fixed; inset: 0; background: #000;
+    transition: background-color 25ms linear; }
+  #join { position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 1rem; color: #fff;
+    text-align: center; padding: 2rem; }
+  #join h1 { font-weight: 700; font-size: 1.6rem; margin: 0; }
+  #join p { opacity: .7; margin: 0; max-width: 24rem; line-height: 1.4; }
+  button { font-size: 1.2rem; padding: 1rem 2rem; border: 0; border-radius: 999px;
+    background: #fff; color: #000; font-weight: 700; }
+  #status { position: fixed; left: 8px; bottom: 8px; font: 12px/1.4 monospace;
+    color: #0f0; opacity: .6; white-space: pre; pointer-events: none; }
+  #meter { position: fixed; left: 0; right: 0; top: 0; height: 6px;
+    background: #ffffff1f; pointer-events: none; }
+  #meterFill { height: 100%; width: 0; background: #19ff7a;
+    transition: width 60ms linear; }
+  #join { background: radial-gradient(ellipse at 50% 32%, #2a1a5e 0%, #07070c 70%); }
+  @keyframes joinpulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+  #join button { animation: joinpulse 2.2s ease-in-out infinite; box-shadow: 0 0 40px #7c5cff66; }
+  #glow { position: fixed; inset: 0; pointer-events: none; opacity: 0; mix-blend-mode: screen;
+    background: radial-gradient(circle at 50% 48%, rgba(255,255,255,.9), rgba(255,255,255,0) 62%); }
+  #toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+    font: 700 14px system-ui; color: #fff; background: #000000aa; padding: 6px 16px;
+    border-radius: 999px; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #diag { position: fixed; left: 8px; bottom: 64px; max-width: 86vw;
+    font: 11px/1.5 ui-monospace, monospace; color: #bdeeff; background: #000000c4;
+    padding: 10px 12px; border-radius: 10px; display: none; white-space: pre; pointer-events: none; }
+  #status { pointer-events: auto; cursor: pointer; }
+</style>
+</head>
+<body>
+  <div id="stage"></div>
+  <div id="glow"></div>
+  <div id="meter"><div id="meterFill"></div></div>
+  <div id="toast"></div>
+  <div id="diag"></div>
+  <div id="join">
+    <h1>You're part of the show ✨</h1>
+    <p>Hold your phone up and tap below. Allow the microphone so it can hear the music and pulse in time with everyone around you.</p>
+    <button id="joinBtn">Tap to join</button>
+  </div>
+  <div id="status"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
