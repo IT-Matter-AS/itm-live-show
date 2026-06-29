@@ -413,3 +413,45 @@ export class OneEuro {
     return this.last;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Co-location from shared audio — zero-setup "depth". Phones near each other
+// hear the same song at the same instant; a phone's beat-onset phase vs the
+// crowd's reveals how far it is from the sound source (front .. back). No
+// beacons, no extra emission — works best at large venues (big distance spread).
+// ---------------------------------------------------------------------------
+
+export const foldPhase = (tMs, periodMs) => ((tMs % periodMs) + periodMs) % periodMs;
+
+// Circular mean of phases (ms within periodMs) — robust center of one phone's
+// own recent onsets.
+export function circMean(phases, periodMs) {
+  if (!phases.length) return 0;
+  let x = 0, y = 0;
+  for (const p of phases) { const a = (p / periodMs) * 2 * Math.PI; x += Math.cos(a); y += Math.sin(a); }
+  let a = Math.atan2(y, x);
+  if (a < 0) a += 2 * Math.PI;
+  return (a / (2 * Math.PI)) * periodMs;
+}
+
+// Crowd lead phase (front, nearest the source) + spread, from many phones'
+// phases, handling circular wrap by cutting at the largest empty arc.
+export function phaseStats(phases, periodMs) {
+  const n = phases.length;
+  if (n < 4) return { lead: 0, spread: 0, n };
+  const s = [...phases].sort((a, b) => a - b);
+  let gapAt = 0, gap = s[0] + periodMs - s[n - 1];
+  for (let i = 1; i < n; i++) { const g = s[i] - s[i - 1]; if (g > gap) { gap = g; gapAt = i; } }
+  const u = s.map((p) => ((p - s[gapAt]) % periodMs + periodMs) % periodMs).sort((a, b) => a - b);
+  const at = (q) => u[Math.min(n - 1, Math.max(0, Math.round(q * (n - 1))))];
+  const u10 = at(0.1), u90 = at(0.9);
+  return { lead: (s[gapAt] + u10) % periodMs, spread: Math.max(0, u90 - u10), n };
+}
+
+// Front(0)..back(1) for this phone given the crowd lead phase + spread.
+export function depthOf(myPhaseMs, leadMs, spreadMs, periodMs) {
+  if (spreadMs <= 1) return 0.5;
+  let d = ((myPhaseMs - leadMs) % periodMs + periodMs) % periodMs;
+  if (d > periodMs / 2) d -= periodMs; // a hair ahead of the lead is still "front"
+  return Math.max(0, Math.min(1, d / spreadMs));
+}

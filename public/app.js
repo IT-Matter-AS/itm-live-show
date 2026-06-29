@@ -1,6 +1,6 @@
 import { Localizer } from '/localizer.js';
 import { render, resolveScene, beatEnvelope, idleEnvelope, DEMO_BPM } from '/show.js';
-import { AudioReactor, AUDIO, makeChirpTemplate, locateFromFrame, calibrateOffsets, ClockFilter, PhaseLock, OneEuro } from '/dsp.js';
+import { AudioReactor, AUDIO, makeChirpTemplate, locateFromFrame, calibrateOffsets, ClockFilter, PhaseLock, OneEuro, foldPhase, circMean, depthOf } from '/dsp.js';
 
 const stage = document.getElementById('stage');
 const joinPanel = document.getElementById('join');
@@ -40,6 +40,12 @@ let realPos = null, realConf = 0, lastFixMs = 0;
 let chirpTpl = null, ring = null, ringLen = 0, headAbs = 0;
 let localizer = null;
 
+// Shared-audio co-location: this phone's beat-phase vs the crowd -> a front..back
+// "depth" coordinate, used when there's no beacon fix. No setup, no extra emission.
+let depthInfo = null, myPhase = null, myDepth = null;
+const onsetPhases = [];
+const myX = Math.random(); // stable lateral coordinate for depth-only positioning
+
 // Calibration: open the page with ?cal=x,y (your known spot in metres) to measure
 // and publish the beacons' device latencies.
 const calParam = new URLSearchParams(location.search).get('cal');
@@ -72,12 +78,19 @@ function onMessage(e) {
     if (m.venue) venue = m.venue;
     if (m.speakers) speakers = m.speakers;
     if (m.offsets) beaconOffsets = m.offsets;
-  }
+  } else if (m.type === 'depth') depthInfo = m;
 }
 function ping() { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'ping', t0: Date.now() })); }
 function burstPing(n = 12) { let i = 0; const tick = () => { if (i++ >= n) return; ping(); setTimeout(tick, 120); }; tick(); }
 setInterval(ping, 3000);  // steady pinging keeps the skew estimate fresh
 setInterval(() => { if (reactor.bpm && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'bpm', bpm: reactor.bpm })); }, 2500);
+// Report our beat-phase for crowd depth — sampled (server sets the rate) so 80k
+// phones don't flood the channel.
+setInterval(() => {
+  if (micState === 'listening' && myPhase != null && ws && ws.readyState === 1 && Math.random() < (depthInfo?.sample ?? 1)) {
+    ws.send(JSON.stringify({ type: 'phase', p: myPhase }));
+  }
+}, 2000);
 connect();
 
 // --- Wake lock -------------------------------------------------------------
@@ -144,6 +157,12 @@ function onOnset() {
     if (Number.isFinite(d)) t -= d / 343;
   }
   phase.onset(t);
+
+  // Shared-audio depth: record this onset's phase against the global beat grid.
+  const period = depthInfo?.period || 60000 / (sharedBpm || DEMO_BPM);
+  onsetPhases.push(foldPhase(serverNow(), period));
+  if (onsetPhases.length > 6) onsetPhases.shift();
+  myPhase = circMean(onsetPhases, period);
 }
 
 // Rolling capture buffer for chirp detection.
@@ -196,10 +215,13 @@ function loop() {
   sampleAudio();
   const t = serverNow() / 1000;
 
+  // Position priority: a fresh beacon fix, else shared-audio depth, else simulated.
+  myDepth = (depthInfo?.ok && myPhase != null) ? depthOf(myPhase, depthInfo.lead, depthInfo.spread, depthInfo.period) : null;
   const rf = realFresh();
-  const norm = rf
-    ? { nx: clamp01(realPos.x / venue.width), ny: clamp01(realPos.y / venue.height) }
-    : localizer?.normalized();
+  let norm, posSrc;
+  if (rf) { norm = { nx: clamp01(realPos.x / venue.width), ny: clamp01(realPos.y / venue.height) }; posSrc = 'ACOUSTIC'; }
+  else if (myDepth != null) { norm = { nx: myX, ny: myDepth }; posSrc = 'DEPTH'; }
+  else { norm = localizer?.normalized(); posSrc = 'sim'; }
   if (!norm) return;
 
   // The reactor follows the music's ACTUAL transients — the robust primary
@@ -231,7 +253,10 @@ function loop() {
     ? `mic ${audioCtx?.state || '?'} ${(sharedBpm || reactor.bpm) ? '~' + (sharedBpm || reactor.bpm) + 'bpm' : ''}`
     : (micState === 'denied' ? `mic FAILED (${micError})` : 'mic —');
   const palLabel = typeof palette === 'string' ? palette : 'custom';
-  const posTxt = calPos ? `CALIBRATING @${calPos.x},${calPos.y}` : (rf ? `pos ACOUSTIC ${(realConf * 100) | 0}%` : `pos sim (${anchors.length}/3 beacons)`);
+  const posTxt = calPos ? `CALIBRATING @${calPos.x},${calPos.y}`
+    : posSrc === 'ACOUSTIC' ? `pos ACOUSTIC ${(realConf * 100) | 0}%`
+    : posSrc === 'DEPTH' ? `pos DEPTH ${(myDepth * 100) | 0}%`
+    : `pos sim (${anchors.length}/3 beacons)`;
   statusEl.textContent =
     `${micTxt}  lvl ${(reactor.level * 100) | 0}%\n${scene} · ${palLabel}   ${posTxt}\n${wakeLabel()}   clk ±${Number.isFinite(q) ? (q | 0) : '?'}ms   (tap for details)`;
 }
@@ -249,6 +274,7 @@ function diagText() {
   L.push(`pos    : ${calPos ? 'CALIBRATING' : (rf ? 'ACOUSTIC' : 'sim')}  conf ${(realConf * 100) | 0}%`);
   if (realPos) L.push(`         (${realPos.x.toFixed(1)}, ${realPos.y.toFixed(1)}) m  in ${venue.width}x${venue.height}`);
   L.push(`field  : ${anchors.length} beacons · ${speakers.length} speakers`);
+  L.push(`depth  : ${myDepth != null ? (myDepth * 100 | 0) + '% front..back' : '—'}  crowd ${depthInfo?.ok ? 'spread ' + (depthInfo.spread | 0) + 'ms' : 'n/a'}`);
   if (detInfo && detInfo.arrivals && detInfo.arrivals.length) {
     for (const a of detInfo.arrivals) L.push(`  beacon slot ${a.slot}: SNR ${a.snr.toFixed(1)}`);
   } else {

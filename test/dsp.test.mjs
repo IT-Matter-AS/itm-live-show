@@ -1,6 +1,7 @@
 import {
   makeChirp, makeChirpTemplate, findChirp, solveTDOA, locateFromFrame, calibrateOffsets,
   dist, SPEED_OF_SOUND, AudioReactor, ClockFilter, TempoEstimator, PhaseLock, OneEuro,
+  foldPhase, phaseStats, depthOf,
 } from '../public/dsp.js';
 
 const sr = 48000;
@@ -201,6 +202,27 @@ const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}`); if
   ok(res.pos != null, `reuse: located`);
   const err = res.pos ? dist(res.pos, truth) : 999;
   ok(err < 0.5, `reuse: picked correct local cluster within ${(err * 100).toFixed(1)} cm`);
+}
+
+// --- Test 10: co-location depth from shared-audio onset phase -----------------
+{
+  const period = 500, c = SPEED_OF_SOUND, base = 120; // 120 BPM, arbitrary source offset
+  const ds = [], phases = [];
+  for (let i = 0; i < 60; i++) {
+    const d = Math.random() * 40;                       // 0..40 m from the source
+    ds.push(d);
+    phases.push(foldPhase(base + (d / c) * 1000 + (Math.random() - 0.5) * 16, period)); // +-8ms jitter
+  }
+  const st = phaseStats(phases, period);
+  ok(st.spread > 50 && st.spread < 160, `crowd phase spread ${st.spread.toFixed(0)} ms over 0-40 m`);
+
+  const depths = phases.map((p) => depthOf(p, st.lead, st.spread, period));
+  const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+  const md = mean(ds), mp = mean(depths);
+  let num = 0, va = 0, vb = 0;
+  for (let i = 0; i < ds.length; i++) { const x = ds[i] - md, y = depths[i] - mp; num += x * y; va += x * x; vb += y * y; }
+  const corr = num / Math.sqrt(va * vb);
+  ok(corr > 0.8, `depth tracks distance-from-source (r=${corr.toFixed(2)})`);
 }
 
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} TEST(S) FAILED`);

@@ -8,7 +8,7 @@ import os from 'node:os';
 import QRCode from 'qrcode';
 import selfsigned from 'selfsigned';
 import { WebSocketServer } from 'ws';
-import { AUDIO, TempoEstimator } from '../public/dsp.js';
+import { AUDIO, TempoEstimator, phaseStats } from '../public/dsp.js';
 
 // Resilience: a long-running event server must outlive any single bad request
 // or dropped socket. Log and carry on instead of crashing.
@@ -39,6 +39,7 @@ let speakers = [];           // PA speaker locations [{x,y}] — used for propag
 let beaconOffsets = {};      // calibrated per-beacon emit latencies (slot -> seconds)
 const MAX_ANCHORS = Math.floor(AUDIO.frameMs / AUDIO.slotMs); // TDMA slots per cycle
 const tempo = new TempoEstimator();
+let phaseReports = []; // { p, t } phones' beat-phase signatures for shared-audio depth
 
 // Persist the venue config so a "save" survives a server restart.
 const CONFIG_FILE = join(ROOT, '.venue.json');
@@ -271,6 +272,9 @@ wss.on('connection', (ws) => {
       case 'bpm': // A phone's local tempo estimate -> feeds the crowd-median tempo.
         tempo.add(msg.bpm, Date.now());
         break;
+      case 'phase': // A phone's beat-phase signature -> shared-audio co-location.
+        if (Number.isFinite(msg.p)) { phaseReports.push({ p: msg.p, t: Date.now() }); if (phaseReports.length > 1000) phaseReports.shift(); }
+        break;
       case 'calib': // Beacon emit-latency calibration from a known-position phone.
         beaconOffsets = { ...beaconOffsets, ...(msg.offsets || {}) };
         saveVenueConfig();
@@ -292,6 +296,18 @@ wss.on('connection', (ws) => {
 
 // Broadcast the crowd-median tempo so every phone shares one drift-free BPM.
 setInterval(() => { const b = tempo.bpm(Date.now()); if (b) broadcast({ type: 'tempo', bpm: b }); }, 1000);
+
+// Aggregate phones' beat-phase signatures into a crowd "depth" range (front .. back
+// from the sound source). `sample` throttles how many phones report, so the
+// channel stays light from a living room to an 80k stadium.
+setInterval(() => {
+  const now = Date.now();
+  phaseReports = phaseReports.filter((r) => now - r.t < 6000);
+  const period = 60000 / (tempo.bpm(now) || BPM);
+  const st = phaseStats(phaseReports.map((r) => r.p), period);
+  const sample = Math.min(1, 200 / Math.max(1, spectators.size));
+  broadcast({ type: 'depth', period, lead: st.lead, spread: st.spread, ok: st.n >= 8 && st.spread >= 12, sample });
+}, 1500);
 
 httpServer.listen(HTTP_PORT, () => {
   console.log('itm-live-show running:');
