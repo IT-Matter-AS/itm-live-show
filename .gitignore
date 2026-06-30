@@ -2,6 +2,7 @@ node_modules/
 .cert/
 .venue.json
 .claude/
+deploy/.env
 *.log
 .DS_Store
 Thumbs.db

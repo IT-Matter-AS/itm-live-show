@@ -1,0 +1,9 @@
+# Caddy gets a REAL, browser-trusted HTTPS certificate automatically (Let's
+# Encrypt) for whatever hostname SITE_ADDRESS is — including a free
+# <your-ip>.sslip.io name, so there is no domain to buy and no cert warning on
+# phones. It then reverse-proxies everything (including the WebSocket upgrade,
+# handled transparently) to the Node app on the private Docker network.
+{$SITE_ADDRESS} {
+	encode zstd gzip
+	reverse_proxy app:3000
+}

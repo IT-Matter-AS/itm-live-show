@@ -62,8 +62,13 @@ managed TLS — no warning, and phones don't need the venue Wi-Fi. The server ad
 ### Real HTTPS for a live test (cellular, no cert warning)
 
 Phones need a *trusted* https origin (the self-signed LAN cert blocks the mic on
-some browsers). Three ways, easiest first:
+some browsers). Easiest first:
 
+- **Hetzner / any VPS (recommended for a real test).** A real HTTPS URL with **no
+  domain to buy** and **no cert warning** — give your non-technical friend a link
+  and they just open it. See **[deploy/DEPLOY.md](deploy/DEPLOY.md)**: create a
+  small Ubuntu server, then `git clone … && bash deploy/setup.sh`. Caddy fetches a
+  Let's Encrypt cert for a free `<ip>.sslip.io` name and proxies to the app.
 - **No install — VS Code port forwarding.** Run `npm start`, open the **Ports**
   panel → **Forward Port** `3000` → set **Visibility: Public** → open the
   `https://…devtunnels.ms` URL. Real cert, works on cellular, one action.

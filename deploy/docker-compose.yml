@@ -1,0 +1,38 @@
+name: itm-live-show
+
+# Two containers: the Node app (plain HTTP, private) and Caddy (public, TLS).
+# `bash deploy/setup.sh` writes deploy/.env (SITE_ADDRESS + HOST_KEY) and runs
+# this. Everything restarts on reboot.
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    environment:
+      HTTP_ONLY: "1"                          # serve plain HTTP behind Caddy's TLS
+      PORT: "3000"
+      PUBLIC_URL: "https://${SITE_ADDRESS}"   # so the QR points at the real HTTPS URL
+      HOST_KEY: "${HOST_KEY}"                  # director key (remote control auth)
+    expose:
+      - "3000"                                # private — only Caddy reaches it
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"                               # ACME http challenge + http->https redirect
+      - "443:443"
+    environment:
+      SITE_ADDRESS: "${SITE_ADDRESS}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data                      # persists issued certs across restarts
+      - caddy_config:/config
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
