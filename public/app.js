@@ -39,6 +39,8 @@ let lastOnsetMs = 0;   // performance.now() of the last detected onset
 let curScene = null, curPalette = null, curLookKey = null, prevScene = null, prevPalette = null, lookChangeAt = 0, hadPrev = false;
 // photosensitivity safety: slew-limited flash
 let dispPulse = 0, dispDrop = 0, lastFrameMs = 0;
+// battery-aware power save (Android; no-op where the Battery API is absent)
+let powerSave = false, psToggle = false;
 
 // Positioning + venue.
 let anchors = [], speakers = [], venue = { width: 10, height: 7 }, beaconOffsets = {};
@@ -86,7 +88,7 @@ function onMessage(e) {
     if (m.speakers) speakers = m.speakers;
     if (m.offsets) beaconOffsets = m.offsets;
   } else if (m.type === 'depth') depthInfo = m;
-  else if (m.type === 'music') musicFeed = { beatAt: m.beatAt, period: m.period, level: m.level, energy: m.energy, drop: m.drop, bands: m.bands, at: Date.now() };
+  else if (m.type === 'music') musicFeed = { beatAt: m.beatAt, period: m.period, level: m.level, energy: m.energy, drop: m.drop, bands: m.bands, section: m.section, at: Date.now() };
 }
 function ping() { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'ping', t0: Date.now() })); }
 function burstPing(n = 12) { let i = 0; const tick = () => { if (i++ >= n) return; ping(); setTimeout(tick, 120); }; tick(); }
@@ -100,6 +102,12 @@ setInterval(() => {
   }
 }, 2000);
 connect();
+// On low battery (and not charging), drop to power-save (half frame rate, dimmer).
+// Battery API is Android-only; elsewhere this stays off.
+navigator.getBattery?.().then((b) => {
+  const upd = () => { powerSave = b.level < 0.2 && !b.charging; };
+  b.addEventListener('levelchange', upd); b.addEventListener('chargingchange', upd); upd();
+}).catch(() => {});
 
 // --- Wake lock -------------------------------------------------------------
 let wakeLock = null;
@@ -222,6 +230,7 @@ joinBtn.addEventListener('click', () => {
 // --- Render loop -----------------------------------------------------------
 function loop() {
   requestAnimationFrame(loop);
+  if (powerSave) { psToggle = !psToggle; if (psToggle) return; } // ~30fps to save battery
   const t = serverNow() / 1000;
 
   const musicFresh = musicFeed && Date.now() - musicFeed.at < 3000 && musicFeed.level > 0.06;
@@ -283,14 +292,15 @@ function loop() {
   dispDrop += tgtDrop > dispDrop ? Math.min(tgtDrop - dispDrop, rise) : tgtDrop - dispDrop;
 
   const bpmNow = sharedBpm || reactor.bpm || DEMO_BPM;
-  const { scene, palette } = resolveScene(sceneState, t, bpmNow);
+  const section = musicFresh ? musicFeed.section : reactor.section; // song structure -> director
+  const { scene, palette } = resolveScene(sceneState, t, bpmNow, section);
   // Smooth crossfade when the look changes (musical transitions).
   const lookKey = scene + '|' + (typeof palette === 'string' ? palette : 'custom');
   if (lookKey !== curLookKey) {
     prevScene = curScene; prevPalette = curPalette; hadPrev = curLookKey != null;
     lookChangeAt = performance.now(); curScene = scene; curPalette = palette; curLookKey = lookKey;
   }
-  const ctx = { nx: norm.nx, ny: norm.ny, t, pulse: dispPulse, level, bpm: bpmNow, react: sceneState?.react, image: sceneState?.image, energy, drop: dispDrop, bands };
+  const ctx = { nx: norm.nx, ny: norm.ny, t, pulse: dispPulse, level, bpm: bpmNow, react: sceneState?.react, image: sceneState?.image, energy: powerSave ? energy * 0.7 : energy, drop: dispDrop, bands };
   let color = render(curScene, curPalette, ctx);
   const fade = (performance.now() - lookChangeAt) / 700;
   if (hadPrev && fade < 1) color = mix(render(prevScene, prevPalette, ctx), color, fade);
@@ -321,6 +331,7 @@ function diagText() {
   L.push(`mic    : ${micState}${micState === 'listening' ? ' (' + (audioCtx?.state || '?') + ')' : ''}${micError ? ' [' + micError + ']' : ''}`);
   L.push(`audio  : level ${(reactor.level * 100) | 0}%  pulse ${(reactor.pulse * 100) | 0}%`);
   L.push(`feel   : energy ${(reactor.energy * 100) | 0}%  drop ${(reactor.drop * 100) | 0}%  b/m/t ${(reactor.bands.bass * 100) | 0}/${(reactor.bands.mid * 100) | 0}/${(reactor.bands.treble * 100) | 0}`);
+  L.push(`struct : ${reactor.section}  downbeat=slot${reactor.downbeatSlot}${powerSave ? '  [power-save]' : ''}`);
   L.push(`drive  : ${curFeed}${curFeed === 'central' ? ' (visualizer feed)' : ''}`);
   L.push(`tempo  : local ${reactor.bpm || '-'}  shared ${sharedBpm || '-'} bpm`);
   L.push(`clock  : ±${Number.isFinite(q) ? (q | 0) : '?'} ms`);

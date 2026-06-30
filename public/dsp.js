@@ -272,6 +272,9 @@ export class AudioReactor {
     this.energy = 0;         // 0..1 slow energy envelope (verse vs chorus)
     this.drop = 0;           // 0..1 decaying burst after a detected drop
     this.bands = { bass: 0, mid: 0, treble: 0 };
+    this.section = 'calm';   // 'calm' | 'build' | 'peak' | 'drop' (song structure)
+    this.downbeatSlot = 0;   // which beat-of-4 carries the most bass (the "1")
+    this._eTrend = 0; this._beatCount = 0; this._bassSlots = [0, 0, 0, 0];
     this.beats = 0;
     this.bpm = null;
     this.lastBeatMs = -1e9;
@@ -328,7 +331,14 @@ export class AudioReactor {
     // Onset = rising flux peak above an adaptive floor; level-gated for silence.
     this._fluxAvg += (flux - this._fluxAvg) * 0.05;
     if (this.level > 0.05 && flux > this._fluxAvg * this.sens + this.fluxFloor && flux > this._fluxPrev && nowMs - this.lastBeatMs > this.refractoryMs) {
-      this.lastBeatMs = nowMs; this.beats++; this.pulse = 1;
+      // Downbeat: the beat-of-4 with the most bass is the "1". Track a per-slot
+      // bass average, then accent the downbeat (slightly stronger flash).
+      const slot = this._beatCount % 4;
+      this._bassSlots[slot] = this._bassSlots[slot] * 0.9 + this.bands.bass * 0.1;
+      let mx = 0; for (let i = 1; i < 4; i++) if (this._bassSlots[i] > this._bassSlots[mx]) mx = i;
+      this.downbeatSlot = mx;
+      this.lastBeatMs = nowMs; this.beats++; this._beatCount++;
+      this.pulse = slot === mx ? 1 : 0.82; // accent the 1
     }
     this._fluxPrev = flux;
 
@@ -339,6 +349,11 @@ export class AudioReactor {
     this._eLong += (this.level - this._eLong) * 0.01;
     if (this._eShort - this._eLong > 0.35 && this._eShort > 0.5 && nowMs - this._lastDrop > 3500) this._lastDrop = nowMs;
     this.drop = nowMs - this._lastDrop < 2000 ? Math.exp(-(nowMs - this._lastDrop) / 450) : 0;
+
+    // Song section from the energy envelope + its slow trend (drives the director).
+    this._eTrend += (this.energy - this._eTrend) * 0.004;
+    const rising = this.energy - this._eTrend > 0.04;
+    this.section = this.drop > 0.4 ? 'drop' : this.energy > 0.62 ? 'peak' : rising ? 'build' : 'calm';
 
     // Tempogram beat lock: push flux onto a fixed ~50 Hz time grid, autocorrelate
     // a few times a second, and take the strongest lag in 60–180 BPM. Robust on

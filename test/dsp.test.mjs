@@ -231,7 +231,7 @@ const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}`); if
 {
   const r = new AudioReactor();
   const N = 256, dt = 1000 / 60;
-  let dropCount = 0, prevDrop = 0;
+  let dropCount = 0, prevDrop = 0, sawDropSection = false;
   for (let f = 0; f < 360; f++) {           // 2 s quiet, then a loud bass-heavy "drop"
     const t = f * dt;
     const loud = t > 2000;
@@ -243,10 +243,12 @@ const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}`); if
     r.update(rms, freq, t);
     if (r.drop > 0.5 && prevDrop <= 0.5) dropCount++;
     prevDrop = r.drop;
+    if (r.section === 'drop') sawDropSection = true;
   }
   ok(r.energy > 0.4, `energy envelope rises in the loud section (${r.energy.toFixed(2)})`);
   ok(dropCount === 1, `drop detected once at the jump (${dropCount})`);
   ok(r.bands.bass > r.bands.treble + 0.2, `bands reflect bass-heavy content (bass ${r.bands.bass.toFixed(2)} vs treble ${r.bands.treble.toFixed(2)})`);
+  ok(sawDropSection && r.section === 'peak', `section drop->peak (saw drop=${sawDropSection}, final=${r.section})`);
 }
 
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} TEST(S) FAILED`);

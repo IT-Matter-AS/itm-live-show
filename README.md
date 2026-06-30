@@ -59,20 +59,23 @@ managed TLS — no warning, and phones don't need the venue Wi-Fi. The server ad
 | `VENUE_W` / `VENUE_H` | default venue size in metres |
 | *(none)* | self-signed cert — **LAN dev only**, one-time warning |
 
-### One-command deploy (real HTTPS, cellular)
+### Real HTTPS for a live test (cellular, no cert warning)
 
-The repo ships a `Dockerfile` (HTTP-only, for a host that terminates TLS at its
-edge) and a Render blueprint. Any container host works — e.g.:
+Phones need a *trusted* https origin (the self-signed LAN cert blocks the mic on
+some browsers). Three ways, easiest first:
 
-```sh
-# Fly.io
-fly launch --dockerfile Dockerfile        # then: fly deploy
-fly secrets set PUBLIC_URL=https://<your-app>.fly.dev   # point the QR at it
-```
+- **No install — VS Code port forwarding.** Run `npm start`, open the **Ports**
+  panel → **Forward Port** `3000` → set **Visibility: Public** → open the
+  `https://…devtunnels.ms` URL. Real cert, works on cellular, one action.
+- **Fly.io (one command).** `fly launch` then `fly deploy` (uses `fly.toml` +
+  `Dockerfile`), then `fly secrets set PUBLIC_URL=https://<app>.fly.dev`.
+- **Render.** New → Blueprint → pick this repo (`render.yaml`), then set
+  `PUBLIC_URL` to the assigned `https://…onrender.com` and redeploy.
 
-Or on Render: New → Blueprint → pick this repo (uses `render.yaml`), then set
-`PUBLIC_URL` to the assigned `https://…onrender.com` and redeploy. Now phones
-join over cellular with **no Wi-Fi and no cert warning**.
+In deploy modes the app serves plain HTTP behind the platform's TLS edge
+(`HTTP_ONLY=1`) and **requires the director key** (`HOST_KEY`) for control —
+spectators get the keyless QR. On your own laptop, `localhost` is auto-trusted as
+director (no key needed).
 
 ## Synchronization & accuracy
 

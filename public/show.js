@@ -168,17 +168,34 @@ export function render(scene, palette, ctx) {
 // Director: directive + shared clock -> the active scene/palette. 'auto' values
 // cycle on the clock so every phone agrees with no per-frame messaging.
 const PHRASE_BARS = 8; // auto scenes change on a musical phrase, not a fixed timer
-export function resolveScene(state, tSec, bpm) {
+// In auto mode the active song section steers the look (calm verse vs peak drop).
+const SECTION_SCENES = {
+  calm: ['aurora', 'gradient', 'pulse'],
+  build: ['wave', 'tide', 'spectrum'],
+  peak: ['sections', 'depthrows', 'spectrum'],
+  drop: ['strobe', 'tide', 'sections'],
+};
+const SECTION_PALS = {
+  calm: ['ocean', 'sunset'], build: ['sunset', 'neon'],
+  peak: ['fire', 'neon', 'rainbow'], drop: ['white', 'fire', 'neon'],
+};
+export function resolveScene(state, tSec, bpm, section) {
   if (!state) return { scene: 'aurora', palette: 'sunset' };
   const e = (state.epoch || 0) / 1000;
   const elapsed = Math.max(0, tSec - e);
   const phrase = PHRASE_BARS * 4 * (60 / (bpm || DEMO_BPM)); // seconds per phrase (tempo-relative)
-  const scene = state.scene && state.scene !== 'auto'
-    ? state.scene
-    : SCENES[Math.floor(elapsed / phrase) % SCENES.length];
-  const palette = state.palette && state.palette !== 'auto'
-    ? state.palette
-    : PALETTE_NAMES[Math.floor(elapsed / (phrase * 2)) % PALETTE_NAMES.length];
+  const pick = (list, secs) => list[Math.floor(elapsed / secs) % list.length];
+
+  let scene;
+  if (state.scene && state.scene !== 'auto') scene = state.scene;
+  else if (section && SECTION_SCENES[section]) scene = pick(SECTION_SCENES[section], phrase);
+  else scene = pick(SCENES, phrase);
+
+  let palette;
+  if (state.palette && state.palette !== 'auto') palette = state.palette;
+  else if (section && SECTION_PALS[section]) palette = pick(SECTION_PALS[section], phrase * 2);
+  else palette = pick(PALETTE_NAMES, phrase * 2);
+
   return { scene, palette };
 }
 
