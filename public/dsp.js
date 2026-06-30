@@ -269,7 +269,8 @@ export class AudioReactor {
     this.lastBeatMs = -1e9;
     this.sens = opts.sens ?? 1.6;            // flux peak must exceed adaptive floor * this
     this.refractoryMs = opts.refractoryMs ?? 140;
-    this.gain = opts.gain ?? 7;              // maps RMS -> 0..1 level
+    this.peakDecay = opts.peakDecay ?? 0.997; // auto-gain peak-follower decay
+    this._peak = 0.08;
     this.bandFrac = opts.bandFrac ?? 0.22;   // flux over the bottom ~22% of bins (<~5kHz)
     this.fluxFloor = opts.fluxFloor ?? 0.004;
     this._lastT = null;
@@ -285,9 +286,13 @@ export class AudioReactor {
     const dt = this._lastT == null ? 16 : Math.min(100, nowMs - this._lastT);
     this._lastT = nowMs;
 
-    // Loudness: fast attack, slow release -> a glow that follows the music.
-    const target = Math.min(1, rms * this.gain);
-    this.level += (target - this.level) * (target > this.level ? 0.5 : 0.08);
+    // Loudness with auto-gain: a slow-decaying peak follower normalizes ANY input
+    // volume (mic, line-in, tab audio) into 0..1, then heavy smoothing makes a
+    // calm "energy" glow — no more jumpy meter. The sharp beat flash is `pulse`,
+    // kept separate so the glow stays smooth while beats still pop.
+    this._peak = Math.max(rms, this._peak * this.peakDecay);
+    const norm = this._peak > 1e-3 ? Math.min(1, rms / this._peak) : 0;
+    this.level += (norm - this.level) * 0.1;
     this.pulse *= Math.exp(-dt / 90);
 
     // Spectral flux: sum of positive bin-to-bin increases across the musical band
