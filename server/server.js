@@ -35,6 +35,14 @@ const TLS_KEY_FILE = process.env.TLS_KEY_FILE;
 // Director control key: only clients that present it may drive the show / move
 // beacons. Spectators never get it (their QR points to the keyless URL).
 const HOST_KEY = process.env.HOST_KEY || randomBytes(5).toString('hex');
+// In pure local dev (no proxy/public deploy), the machine running the server IS
+// the organizer — trust localhost as director with no key. Disabled in any
+// deployment mode (behind a proxy every client looks like 127.0.0.1).
+const TRUST_LOCAL = !HTTP_ONLY && !PUBLIC_URL;
+function isLocalhost(req) {
+  const a = req?.socket?.remoteAddress || '';
+  return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
 
 // Positioning venue in metres — phones normalize beacon coordinates by this.
 // Mutable: a setup console can reshape the venue and place PA speakers live.
@@ -211,20 +219,24 @@ function broadcast(obj) {
   const data = JSON.stringify(obj);
   for (const ws of wss.clients) if (ws.readyState === ws.OPEN) ws.send(data);
 }
+// A failed listen (e.g. port in use) should fail loudly, not limp on half-bound.
+for (const { server } of listeners) server.on('error', (e) => { console.error('Server failed to start:', e?.message || e); process.exit(1); });
+
 const broadcastCount = () => broadcast({ type: 'count', n: spectators.size });
 const anchorList = () => [...anchors.values()].map((a) => ({ slot: a.slot, x: a.x, y: a.y }));
 const anchorsMsg = () => ({ type: 'anchors', venue: VENUE, list: anchorList(), speakers, offsets: beaconOffsets });
 const broadcastAnchors = () => broadcast(anchorsMsg());
 
-wss.on('connection', (ws) => {
+wss.on('connection', (ws, req) => {
+  ws.isLocal = TRUST_LOCAL && isLocalhost(req); // localhost = the organizer's own machine
   ws.on('message', (raw) => {
     const now = Date.now();                       // simple per-connection rate limit
     if (now - (ws._win || 0) > 1000) { ws._win = now; ws._n = 0; }
     if (++ws._n > 150) return;
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
-    // Mutating/control messages require director authorization (see 'host').
-    if (!ws.isDirector && ['anchor', 'scene', 'start', 'stop', 'music', 'calib', 'config'].includes(msg.type)) return;
+    // Mutating/control messages require director authorization (key or localhost).
+    if (!(ws.isDirector || ws.isLocal) && ['anchor', 'scene', 'start', 'stop', 'music', 'calib', 'config'].includes(msg.type)) return;
     switch (msg.type) {
       case 'ping': // NTP-style clock sync: echo client stamp, add server time.
         ws.send(JSON.stringify({ type: 'pong', t0: msg.t0, ts: Date.now() }));
@@ -238,7 +250,7 @@ wss.on('connection', (ws) => {
         break;
       case 'host': // Console / visualizer / setup — authorize as director, send state.
         if (msg.key && msg.key === HOST_KEY) ws.isDirector = true;
-        ws.send(JSON.stringify({ type: 'auth', ok: !!ws.isDirector }));
+        ws.send(JSON.stringify({ type: 'auth', ok: !!(ws.isDirector || ws.isLocal) }));
         ws.send(JSON.stringify({ type: 'count', n: spectators.size }));
         ws.send(JSON.stringify(currentScene));
         ws.send(JSON.stringify(anchorsMsg())); // so /setup shows the saved venue + speakers
@@ -342,10 +354,10 @@ setInterval(() => {
 
 httpServer.listen(HTTP_PORT, () => {
   console.log('itm-live-show running:');
-  console.log(`  Host console (DIRECTOR — keep private): http://localhost:${HTTP_PORT}/host?key=${HOST_KEY}`);
-  console.log(`  Phones should open (no key):            ${joinURL()}`);
-  if (process.env.HOST_KEY) console.log('  Director key from HOST_KEY env.');
-  else console.log('  Director key is random this run; set HOST_KEY env to keep it stable.');
+  console.log(`  Host console (on THIS machine): http://localhost:${HTTP_PORT}/host`);
+  console.log(`  Phones should open:             ${joinURL()}`);
+  if (TRUST_LOCAL) console.log('  Director: localhost is auto-authorized — no key needed here.');
+  console.log(`  Remote director (LAN/web): append ?key=${HOST_KEY}`);
   if (HTTP_ONLY) console.log('  Mode: HTTP_ONLY (a managed proxy/CDN terminates TLS).');
 });
 if (httpsServer) {
