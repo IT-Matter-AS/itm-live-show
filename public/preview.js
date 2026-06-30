@@ -130,7 +130,11 @@ captureBtn.addEventListener('click', async () => {
     src.connect(analyser); analyser.connect(mute).connect(audioCtx.destination);
     listening = true; captureBtn.classList.add('on'); captureBtn.textContent = '🎤 capturing → crowd';
   } catch (e) {
-    capEl.textContent = 'mic error: ' + (e?.name || e); // e.g. NotAllowedError (permission)
+    const n = e?.name || String(e);
+    capEl.textContent = n === 'NotAllowedError'
+      ? 'mic blocked — allow it via the address-bar icon then reload, or open this page at http://localhost:3000/preview'
+      : n === 'NotFoundError' ? 'no microphone found'
+      : 'mic error: ' + n;
   }
 });
 
