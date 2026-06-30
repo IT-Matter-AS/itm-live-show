@@ -317,6 +317,7 @@ wss.on('connection', (ws, req) => {
             ? { bass: +msg.bands.bass || 0, mid: +msg.bands.mid || 0, treble: +msg.bands.treble || 0 }
             : null,
           section: typeof msg.section === 'string' ? msg.section : null,
+          active: Math.max(0, Math.min(1, Number(msg.active) || 0)), // presence (silence gate)
         });
         break;
       case 'calib': // Beacon emit-latency calibration from a known-position phone.

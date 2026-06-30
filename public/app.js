@@ -233,8 +233,8 @@ function loop() {
   if (powerSave) { psToggle = !psToggle; if (psToggle) return; } // ~30fps to save battery
   const t = serverNow() / 1000;
 
-  const musicFresh = musicFeed && Date.now() - musicFeed.at < 3000 && musicFeed.level > 0.06;
-  const hearingMusic = micState === 'listening' && reactor.level > 0.06;
+  const musicFresh = musicFeed && Date.now() - musicFeed.at < 3000 && (musicFeed.active ?? 0) > 0.3;
+  const hearingMusic = micState === 'listening' && reactor.active > 0.3;
   const silent = !musicFresh && !hearingMusic && !hostBeat; // no music anywhere
   if (meterFill) meterFill.style.width = `${Math.round(reactor.level * 100)}%`;
 
@@ -329,7 +329,7 @@ function diagText() {
   const rf = realFresh();
   const L = [];
   L.push(`mic    : ${micState}${micState === 'listening' ? ' (' + (audioCtx?.state || '?') + ')' : ''}${micError ? ' [' + micError + ']' : ''}`);
-  L.push(`audio  : level ${(reactor.level * 100) | 0}%  pulse ${(reactor.pulse * 100) | 0}%`);
+  L.push(`audio  : level ${(reactor.level * 100) | 0}%  pulse ${(reactor.pulse * 100) | 0}%  active ${(reactor.active * 100) | 0}%`);
   L.push(`feel   : energy ${(reactor.energy * 100) | 0}%  drop ${(reactor.drop * 100) | 0}%  b/m/t ${(reactor.bands.bass * 100) | 0}/${(reactor.bands.mid * 100) | 0}/${(reactor.bands.treble * 100) | 0}`);
   L.push(`struct : ${reactor.section}  downbeat=slot${reactor.downbeatSlot}${powerSave ? '  [power-save]' : ''}`);
   L.push(`drive  : ${curFeed}${curFeed === 'central' ? ' (visualizer feed)' : ''}`);

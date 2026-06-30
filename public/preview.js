@@ -168,8 +168,8 @@ document.getElementById('capTap').onclick = () => {
 // Broadcast the current beat feed to every phone (from capture or taps).
 function broadcastMusic() {
   if (!ws || ws.readyState !== 1) return;
-  if (listening) ws.send(JSON.stringify({ type: 'music', beatAt: lastBeatServer, period: 60000 / (reactor.bpm || 120), level: reactor.level, bpm: reactor.bpm || 0, energy: reactor.energy, drop: reactor.drop, bands: reactor.bands, section: reactor.section }));
-  else if (tapMode) ws.send(JSON.stringify({ type: 'music', beatAt: tapBeat, period: tapPeriod, level: 0.7, bpm: tapBpm, energy: 0.9, drop: 0 }));
+  if (listening) ws.send(JSON.stringify({ type: 'music', beatAt: lastBeatServer, period: 60000 / (reactor.bpm || 120), level: reactor.level, bpm: reactor.bpm || 0, energy: reactor.energy, drop: reactor.drop, bands: reactor.bands, section: reactor.section, active: reactor.active }));
+  else if (tapMode) ws.send(JSON.stringify({ type: 'music', beatAt: tapBeat, period: tapPeriod, level: 0.7, bpm: tapBpm, energy: 0.9, drop: 0, active: 1 }));
 }
 
 function sampleMusic() {
@@ -216,24 +216,19 @@ function frame() {
   requestAnimationFrame(frame);
   if (canvas.width < 2) resize();
   const t = serverNow() / 1000;
-  let pulse, level, quiet = false;
-  if (listening) {
-    if (reactor.level < 0.06) {                                // music stopped -> quiet
-      quiet = true; pulse = 0; level = 0;
-      capEl.textContent = '🎵 capturing · quiet — music stopped';
-    } else {
-      pulse = reactor.pulse; level = reactor.level;            // real captured audio
-      capEl.textContent = `🎵 capturing · level ${(reactor.level * 100) | 0}% · ${reactor.bpm ? '~' + reactor.bpm + ' BPM' : '…'} → broadcasting`;
-    }
+  let pulse = 0, level = 0, quiet = true;
+  if (listening && reactor.active > 0.3) {                     // real music above the room noise
+    quiet = false; pulse = reactor.pulse; level = reactor.level;
+    capEl.textContent = `🎵 capturing · level ${(reactor.level * 100) | 0}% · ${reactor.bpm ? '~' + reactor.bpm + ' BPM' : '…'} → broadcasting`;
   } else if (tapMode) {
+    quiet = false;
     const ph = ((serverNow() - tapBeat) % tapPeriod + tapPeriod) % tapPeriod;
     pulse = beatEnvelope(ph / 1000, tapPeriod / 1000); level = 0.7;
     capEl.textContent = `👆 tap tempo · ${tapBpm} BPM → broadcasting (tap again to re-sync)`;
-  } else {
-    pulse = beatEnvelope(t % 0.5, 0.5);                        // synth preview beat
-    level = 0.4 + 0.3 * (0.5 + 0.5 * Math.sin(t * 0.55));
-    // don't touch capEl here — it carries the idle prompt or an error message
+  } else if (listening) {
+    capEl.textContent = '🎵 capturing · quiet — waiting for music';            // silent room -> idle
   }
+  // else: idle (no source picked) -> calm; capEl keeps its prompt/error
 
   const showBpm = (listening && reactor.bpm) || (tapMode && tapBpm) || 120;
   const { scene, palette } = resolveScene(state, t, showBpm, listening ? reactor.section : null);

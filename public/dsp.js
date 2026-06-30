@@ -270,6 +270,8 @@ export class AudioReactor {
     this.pulse = 0;          // 0..1 transient, decays between onsets
     this.flux = 0;           // latest spectral-flux value
     this.energy = 0;         // 0..1 slow energy envelope (verse vs chorus)
+    this.active = 0;         // 0..1 "is there real sound above the room's quiet?"
+    this._floor = 0.02;      // adaptive noise-floor estimate (raw RMS)
     this.drop = 0;           // 0..1 decaying burst after a detected drop
     this.bands = { bass: 0, mid: 0, treble: 0 };
     this.section = 'calm';   // 'calm' | 'build' | 'peak' | 'drop' (song structure)
@@ -306,6 +308,14 @@ export class AudioReactor {
     this.level += (norm - this.level) * 0.1;
     this.pulse *= Math.exp(-dt / 90);
 
+    // Presence via an ADAPTIVE NOISE FLOOR (absolute, not auto-gained): the floor
+    // drops instantly to any new quiet minimum and creeps up slowly, so steady
+    // room noise sits AT the floor (not "music"). Real sound rises well above it.
+    // This is the silence gate — auto-gained `level` can't tell quiet from loud.
+    this._floor = rms < this._floor ? rms : this._floor + (rms - this._floor) * 0.0003;
+    const present = rms > this._floor * 4 + 0.004;
+    this.active += ((present ? 1 : 0) - this.active) * 0.08;
+
     // Frequency bands (bass / mid / treble), each auto-gained to 0..1, so color
     // can mirror the actual sound. Bands stop well below the ultrasonic beacons.
     const N = freq.length;
@@ -330,7 +340,7 @@ export class AudioReactor {
 
     // Onset = rising flux peak above an adaptive floor; level-gated for silence.
     this._fluxAvg += (flux - this._fluxAvg) * 0.05;
-    if (this.level > 0.05 && flux > this._fluxAvg * this.sens + this.fluxFloor && flux > this._fluxPrev && nowMs - this.lastBeatMs > this.refractoryMs) {
+    if (present && flux > this._fluxAvg * this.sens + this.fluxFloor && flux > this._fluxPrev && nowMs - this.lastBeatMs > this.refractoryMs) {
       // Downbeat: the beat-of-4 with the most bass is the "1". Track a per-slot
       // bass average, then accent the downbeat (slightly stronger flash).
       const slot = this._beatCount % 4;
