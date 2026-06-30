@@ -100,43 +100,56 @@ for (const sym of ['❤', '★', '➤', '▲', '☺']) {
   presetBox.appendChild(b);
 }
 
-// --- Capture the live music and broadcast it to every phone ----------------
-// The laptop running the visualizer is usually near the speakers, so its mic
-// gets the cleanest beat — better than scattered phones. We detect the beat here
-// and broadcast {beatAt, period, level} so the whole crowd flashes in unison.
+// --- Drive the crowd from the live music -----------------------------------
+// Three ways, all broadcast the SAME beat feed to every phone:
+//   • tap tempo      — tap the button on the beat. No permissions, works anywhere.
+//   • tab/system audio — grab the music playing on this computer (clean digital
+//                        feed; a "share audio" picker, not a mic grant).
+//   • mic            — when this device is near the speakers.
 const reactor = new AudioReactor();
 let audioCtx = null, analyser = null, byteTime = null, freqData = null;
 let listening = false, lastBeats = 0, lastBeatServer = 0;
-const captureBtn = document.getElementById('capture');
+let tapMode = false, tapBeat = 0, tapPeriod = 500, tapBpm = 120;
+const tapTimes = [];
 const capEl = document.getElementById('cap');
+capEl.textContent = 'pick a source below to drive the crowd  →  tap tempo is easiest';
 
-capEl.textContent = 'tap to capture the room’s music and drive the crowd';
-captureBtn.addEventListener('click', async () => {
-  if (listening) return;
-  capEl.textContent = 'starting…';
-  try {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      // getUserMedia only exists in a secure context.
-      capEl.textContent = 'mic unavailable — open /preview via https:// or http://localhost';
-      return;
-    }
-    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
-    await audioCtx.resume?.();
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+const markCap = (id) => ['capTab', 'capTap', 'capMic'].forEach((x) => document.getElementById(x).classList.toggle('on', x === id));
+function ensureCtx() { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume?.(); return audioCtx; }
+
+// Audio capture (tab/system or mic). The stream request is started inside the
+// click (gesture), then we wire it to the analyser.
+function beginCapture(streamPromise, label, id) {
+  if (!streamPromise) { capEl.textContent = 'not available here — use “tap tempo”, or open at http://localhost:3000/preview'; return; }
+  capEl.textContent = 'starting ' + label + '…';
+  streamPromise.then((stream) => {
+    if (!stream.getAudioTracks().length) { stream.getTracks().forEach((t) => t.stop()); capEl.textContent = 'no audio in that share — re-pick and tick “Share tab/system audio”'; return; }
+    stream.getVideoTracks().forEach((t) => t.stop()); // display capture: ignore video
     const src = audioCtx.createMediaStreamSource(stream);
     analyser = audioCtx.createAnalyser(); analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0;
     byteTime = new Uint8Array(analyser.fftSize); freqData = new Uint8Array(analyser.frequencyBinCount);
     const mute = audioCtx.createGain(); mute.gain.value = 0;
     src.connect(analyser); analyser.connect(mute).connect(audioCtx.destination);
-    listening = true; captureBtn.classList.add('on'); captureBtn.textContent = '🎤 capturing → crowd';
-  } catch (e) {
+    listening = true; tapMode = false; markCap(id);
+  }).catch((e) => {
     const n = e?.name || String(e);
-    capEl.textContent = n === 'NotAllowedError'
-      ? 'mic blocked — allow it via the address-bar icon then reload, or open this page at http://localhost:3000/preview'
-      : n === 'NotFoundError' ? 'no microphone found'
-      : 'mic error: ' + n;
+    capEl.textContent = n === 'NotAllowedError' ? 'permission denied — just use “tap tempo” (no permission needed)' : 'capture error: ' + n;
+  });
+}
+document.getElementById('capTab').onclick = () => { ensureCtx(); beginCapture(navigator.mediaDevices?.getDisplayMedia?.({ video: true, audio: true }), 'tab/system audio', 'capTab'); };
+document.getElementById('capMic').onclick = () => { ensureCtx(); beginCapture(navigator.mediaDevices?.getUserMedia?.({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }), 'mic', 'capMic'); };
+
+// Tap tempo — the no-permission path. Each tap is a beat; we median the gaps.
+document.getElementById('capTap').onclick = () => {
+  const now = serverNow();
+  tapTimes.push(now); if (tapTimes.length > 6) tapTimes.shift();
+  tapBeat = now; tapMode = true; listening = false; markCap('capTap');
+  if (tapTimes.length >= 2) {
+    const ivs = []; for (let i = 1; i < tapTimes.length; i++) ivs.push(tapTimes[i] - tapTimes[i - 1]);
+    ivs.sort((a, b) => a - b); const med = ivs[ivs.length >> 1];
+    if (med > 250 && med < 1500) { tapPeriod = med; tapBpm = Math.round(60000 / med); }
   }
-});
+};
 
 function sampleMusic() {
   if (!analyser) return;
@@ -148,10 +161,11 @@ function sampleMusic() {
   if (reactor.beats > lastBeats) { lastBeats = reactor.beats; lastBeatServer = serverNow(); }
 }
 
-// Broadcast the captured beat feed (~5 Hz; phones render the pulse locally).
+// Broadcast the beat feed (~5 Hz) — from audio capture or from taps.
 setInterval(() => {
-  if (!listening || !ws || ws.readyState !== 1) return;
-  ws.send(JSON.stringify({ type: 'music', beatAt: lastBeatServer, period: 60000 / (reactor.bpm || 120), level: reactor.level, bpm: reactor.bpm || 0 }));
+  if (!ws || ws.readyState !== 1) return;
+  if (listening) ws.send(JSON.stringify({ type: 'music', beatAt: lastBeatServer, period: 60000 / (reactor.bpm || 120), level: reactor.level, bpm: reactor.bpm || 0 }));
+  else if (tapMode) ws.send(JSON.stringify({ type: 'music', beatAt: tapBeat, period: tapPeriod, level: 0.7, bpm: tapBpm }));
 }, 200);
 
 function syncControls() {
@@ -180,12 +194,16 @@ function frame() {
   let pulse, level;
   if (listening) {
     sampleMusic();
-    pulse = reactor.pulse; level = reactor.level;             // the REAL captured music
-    capEl.textContent = `level ${(reactor.level * 100) | 0}%  ${reactor.bpm ? '~' + reactor.bpm + ' BPM' : '…'}  → broadcasting`;
+    pulse = reactor.pulse; level = reactor.level;             // real captured audio
+    capEl.textContent = `🎵 capturing · level ${(reactor.level * 100) | 0}% · ${reactor.bpm ? '~' + reactor.bpm + ' BPM' : '…'} → broadcasting`;
+  } else if (tapMode) {
+    const ph = ((serverNow() - tapBeat) % tapPeriod + tapPeriod) % tapPeriod;
+    pulse = beatEnvelope(ph / 1000, tapPeriod / 1000); level = 0.7;
+    capEl.textContent = `👆 tap tempo · ${tapBpm} BPM → broadcasting (tap again to re-sync)`;
   } else {
     pulse = beatEnvelope(t % 0.5, 0.5);                       // synth preview beat
     level = 0.4 + 0.3 * (0.5 + 0.5 * Math.sin(t * 0.55));
-    // note: don't touch capEl here — it carries the idle prompt or an error message
+    // don't touch capEl here — it carries the idle prompt or an error message
   }
 
   const { scene, palette } = resolveScene(state, t);
