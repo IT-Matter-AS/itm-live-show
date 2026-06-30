@@ -110,9 +110,16 @@ let listening = false, lastBeats = 0, lastBeatServer = 0;
 const captureBtn = document.getElementById('capture');
 const capEl = document.getElementById('cap');
 
+capEl.textContent = 'tap to capture the room’s music and drive the crowd';
 captureBtn.addEventListener('click', async () => {
   if (listening) return;
+  capEl.textContent = 'starting…';
   try {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      // getUserMedia only exists in a secure context.
+      capEl.textContent = 'mic unavailable — open /preview via https:// or http://localhost';
+      return;
+    }
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     await audioCtx.resume?.();
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
@@ -122,7 +129,9 @@ captureBtn.addEventListener('click', async () => {
     const mute = audioCtx.createGain(); mute.gain.value = 0;
     src.connect(analyser); analyser.connect(mute).connect(audioCtx.destination);
     listening = true; captureBtn.classList.add('on'); captureBtn.textContent = '🎤 capturing → crowd';
-  } catch { capEl.textContent = 'mic blocked'; }
+  } catch (e) {
+    capEl.textContent = 'mic error: ' + (e?.name || e); // e.g. NotAllowedError (permission)
+  }
 });
 
 function sampleMusic() {
@@ -172,7 +181,7 @@ function frame() {
   } else {
     pulse = beatEnvelope(t % 0.5, 0.5);                       // synth preview beat
     level = 0.4 + 0.3 * (0.5 + 0.5 * Math.sin(t * 0.55));
-    capEl.textContent = 'tap to capture the room’s music and drive the crowd';
+    // note: don't touch capEl here — it carries the idle prompt or an error message
   }
 
   const { scene, palette } = resolveScene(state, t);
