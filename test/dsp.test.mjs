@@ -69,20 +69,22 @@ const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}`); if
 // --- Test 3: ambient reactor tracks loudness + locks onto a 120 BPM kick ------
 {
   const r = new AudioReactor();
-  const fps = 60, dur = 6.0, dt = 1000 / fps, period = 0.5; // 120 BPM
+  const fps = 60, dur = 6.0, dt = 1000 / fps, period = 0.5, N = 256; // 120 BPM, 256 bins
   let beatsHeard = 0, maxLevel = 0;
   for (let f = 0; f < dur * fps; f++) {
     const t = f * dt;
     const phase = (t / 1000) % period;
-    const kick = phase < 0.07 ? 1 - phase / 0.07 : 0;       // low-band spike each beat
-    const lo = 0.05 + 0.8 * kick;
-    const rms = 0.08 + 0.18 * kick;                          // steady musical loudness + transient
+    const kick = phase < 0.06 ? 1 - phase / 0.06 : 0;        // a transient at each beat
+    const rms = 0.08 + 0.18 * kick;
+    const freq = new Uint8Array(N);                          // spectrum that jumps on the beat
+    for (let k = 1; k < 18; k++) freq[k] = Math.min(255, 25 + 210 * kick);
+    for (let k = 18; k < 56; k++) freq[k] = 18 + 70 * kick;
     const before = r.beats;
-    r.update(rms, lo, t);
+    r.update(rms, freq, t);
     if (r.beats > before) beatsHeard++;
     maxLevel = Math.max(maxLevel, r.level);
   }
-  ok(beatsHeard >= 10 && beatsHeard <= 13, `reactor caught ${beatsHeard} beats (expected ~12)`);
+  ok(beatsHeard >= 10 && beatsHeard <= 13, `flux reactor caught ${beatsHeard} beats (expected ~11-12)`);
   ok(r.bpm >= 110 && r.bpm <= 130, `tempo estimate ${r.bpm} BPM (~120)`);
   ok(maxLevel > 0.3, `level tracks loudness (peak ${maxLevel.toFixed(2)})`);
 }

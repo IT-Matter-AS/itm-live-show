@@ -263,36 +263,52 @@ export class AudioReactor {
   constructor(opts = {}) {
     this.level = 0;          // 0..1 smoothed loudness
     this.pulse = 0;          // 0..1 transient, decays between onsets
+    this.flux = 0;           // latest spectral-flux value (diagnostics)
     this.beats = 0;
     this.bpm = null;
     this.lastBeatMs = -1e9;
-    this.sens = opts.sens ?? 1.35;        // onset must exceed adaptive floor * this
+    this.sens = opts.sens ?? 1.6;            // flux peak must exceed adaptive floor * this
     this.refractoryMs = opts.refractoryMs ?? 140;
-    this.gain = opts.gain ?? 7;           // maps RMS -> 0..1 level
+    this.gain = opts.gain ?? 7;              // maps RMS -> 0..1 level
+    this.bandFrac = opts.bandFrac ?? 0.22;   // flux over the bottom ~22% of bins (<~5kHz)
+    this.fluxFloor = opts.fluxFloor ?? 0.004;
     this._lastT = null;
-    this._loAvg = 0;
-    this._loPrev = 0;
+    this._prev = null;       // previous magnitude spectrum
+    this._fluxAvg = 0;
+    this._fluxPrev = 0;
     this._ivs = [];
   }
 
-  // rms: broadband loudness (~0..1). lo: low-band (kick) energy (0..1). nowMs: wall clock.
-  update(rms, lo, nowMs) {
+  // rms: broadband loudness (~0..1). freq: magnitude spectrum (Uint8Array 0..255,
+  // from AnalyserNode.getByteFrequencyData). nowMs: wall clock.
+  update(rms, freq, nowMs) {
     const dt = this._lastT == null ? 16 : Math.min(100, nowMs - this._lastT);
     this._lastT = nowMs;
 
     // Loudness: fast attack, slow release -> a glow that follows the music.
     const target = Math.min(1, rms * this.gain);
     this.level += (target - this.level) * (target > this.level ? 0.5 : 0.08);
-
-    // Transient decays between onsets.
     this.pulse *= Math.exp(-dt / 90);
 
-    // Low-band onset against an adaptive floor (rising edge + refractory). The
-    // `this.level` gate is a noise gate: no beats in near-silence, so when the
-    // music stops the flashing stops too (instead of triggering on room noise).
-    this._loAvg += (lo - this._loAvg) * 0.05;
-    const rising = lo > this._loPrev;
-    if (this.level > 0.05 && lo > this._loAvg * this.sens + 0.02 && rising && nowMs - this.lastBeatMs > this.refractoryMs) {
+    // Spectral flux: sum of positive bin-to-bin increases across the musical band
+    // (half-wave rectified, so decays don't count). Far more musical than bass
+    // energy alone — it fires on drums, stabs, vocal hits. We stop the band well
+    // below 17 kHz so the ultrasonic positioning chirps never register as beats.
+    const hi = Math.max(4, Math.floor(freq.length * this.bandFrac));
+    let flux = 0;
+    if (this._prev && this._prev.length === freq.length) {
+      for (let k = 1; k < hi; k++) { const d = freq[k] - this._prev[k]; if (d > 0) flux += d; }
+    }
+    flux /= hi * 255;
+    if (!this._prev || this._prev.length !== freq.length) this._prev = new Uint8Array(freq.length);
+    this._prev.set(freq);
+    this.flux = flux;
+
+    // Onset = a rising flux peak above an adaptive floor; level-gated so silence
+    // (or just room noise) never triggers a beat.
+    this._fluxAvg += (flux - this._fluxAvg) * 0.05;
+    const rising = flux > this._fluxPrev;
+    if (this.level > 0.05 && flux > this._fluxAvg * this.sens + this.fluxFloor && rising && nowMs - this.lastBeatMs > this.refractoryMs) {
       if (this.lastBeatMs > -1e8) {
         const iv = nowMs - this.lastBeatMs;
         if (iv > 250 && iv < 1500) { this._ivs.push(iv); if (this._ivs.length > 8) this._ivs.shift(); }
@@ -306,7 +322,7 @@ export class AudioReactor {
         if (v >= 50 && v <= 200) this.bpm = Math.round(v);
       }
     }
-    this._loPrev = lo;
+    this._fluxPrev = flux;
     return this;
   }
 

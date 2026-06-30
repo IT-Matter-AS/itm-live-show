@@ -131,9 +131,7 @@ function sampleMusic() {
   let s = 0; for (let i = 0; i < byteTime.length; i++) { const v = (byteTime[i] - 128) / 128; s += v * v; }
   const rms = Math.sqrt(s / byteTime.length);
   analyser.getByteFrequencyData(freqData);
-  const binHz = audioCtx.sampleRate / analyser.fftSize, loBins = Math.max(2, Math.round(180 / binHz));
-  let lo = 0; for (let i = 1; i <= loBins; i++) lo += freqData[i]; lo /= loBins * 255;
-  reactor.update(rms, lo, performance.now());
+  reactor.update(rms, freqData, performance.now()); // spectral-flux onset detection
   if (reactor.beats > lastBeats) { lastBeats = reactor.beats; lastBeatServer = serverNow(); }
 }
 
