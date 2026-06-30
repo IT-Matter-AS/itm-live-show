@@ -10,6 +10,7 @@ import QRCode from 'qrcode';
 import selfsigned from 'selfsigned';
 import { WebSocketServer } from 'ws';
 import { AUDIO, TempoEstimator, phaseStats } from '../public/dsp.js';
+import { parseUsers, verifyUser, parseCookies, Sessions, safeNext, cookieHeader, clearCookieHeader, loginPage } from './auth.js';
 
 // Resilience: a long-running event server must outlive any single bad request
 // or dropped socket. Log and carry on instead of crashing.
@@ -42,6 +43,35 @@ const TRUST_LOCAL = !HTTP_ONLY && !PUBLIC_URL;
 function isLocalhost(req) {
   const a = req?.socket?.remoteAddress || '';
   return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
+}
+
+// Login gate. Set AUTH_USERS="email:pw,email:pw" to lock the whole deployment to
+// known accounts (the QR/share URL won't work for anyone who can't sign in). A
+// signed-in user is also authorized as director — no ?key= needed. With
+// OPEN_CROWD=1, spectators may join without a login (the no-friction crowd
+// experience) while controlling the show still requires one. Unset = no login.
+const USERS = parseUsers(process.env.AUTH_USERS);
+const AUTH_ON = USERS.size > 0;
+const OPEN_CROWD = process.env.OPEN_CROWD === '1';
+const sessions = new Sessions();
+// Paths that always require a login when AUTH is on (the show's controls).
+const CONTROL_PREFIXES = ['/preview', '/host', '/setup', '/anchor', '/info', '/qr.svg'];
+const isControlPath = (p) => CONTROL_PREFIXES.some((c) => p === c || p.startsWith(c + '/'));
+// Does this request path need a valid session?
+function pathNeedsLogin(p) {
+  if (!AUTH_ON) return false;
+  if (p === '/healthz' || p === '/login' || p === '/logout') return false;
+  return OPEN_CROWD ? isControlPath(p) : true; // open crowd -> only controls gated
+}
+const reqIsSecure = (req) => req.headers['x-forwarded-proto'] === 'https' || !!req.socket?.encrypted;
+const reqEmail = (req) => sessions.emailFor(parseCookies(req.headers.cookie).sid);
+function readBody(req, cap = 8192) {
+  return new Promise((res) => {
+    let n = 0; const chunks = [];
+    req.on('data', (c) => { n += c.length; if (n > cap) { req.destroy(); res(''); } else chunks.push(c); });
+    req.on('end', () => res(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', () => res(''));
+  });
 }
 
 // Positioning venue in metres — phones normalize beacon coordinates by this.
@@ -128,6 +158,36 @@ async function handler(req, res) {
       res.end(JSON.stringify({ ok: true, clients: wss.clients.size, spectators: spectators.size, uptimeS: Math.round(process.uptime()) }));
       return;
     }
+
+    // --- Login gate ----------------------------------------------------------
+    if (AUTH_ON) {
+      const secure = reqIsSecure(req);
+      if (urlPath === '/login') {
+        if (req.method === 'POST') {
+          const form = new URLSearchParams(await readBody(req));
+          const email = verifyUser(USERS, form.get('email'), form.get('password'));
+          const next = safeNext(form.get('next'));
+          if (email) {
+            res.writeHead(303, { 'Set-Cookie': cookieHeader(sessions.create(email), { secure }), Location: next });
+            return res.end();
+          }
+          res.writeHead(303, { Location: '/login?e=1&next=' + encodeURIComponent(next) });
+          return res.end();
+        }
+        if (reqEmail(req)) { res.writeHead(303, { Location: safeNext(u.searchParams.get('next')) }); return res.end(); }
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+        return res.end(loginPage({ error: u.searchParams.get('e') === '1', next: safeNext(u.searchParams.get('next')) }));
+      }
+      if (urlPath === '/logout') {
+        sessions.destroy(parseCookies(req.headers.cookie).sid);
+        res.writeHead(303, { 'Set-Cookie': clearCookieHeader({ secure }), Location: '/login' });
+        return res.end();
+      }
+      if (pathNeedsLogin(urlPath) && !reqEmail(req)) {
+        res.writeHead(303, { Location: '/login?next=' + encodeURIComponent(urlPath) });
+        return res.end();
+      }
+    }
     // Tell the host console which URL to advertise to phones.
     if (urlPath === '/info') {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -206,7 +266,11 @@ if (!HTTP_ONLY) {
 const wss = new WebSocketServer({ noServer: true, maxPayload: 262144 }); // 256 KB cap
 for (const { server } of listeners) {
   server.on('upgrade', (req, socket, head) => {
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+    // Same gate as HTTP: with AUTH on (and not an open crowd), only signed-in
+    // clients may even open a socket. Signed-in email rides along to the handler.
+    const email = AUTH_ON ? reqEmail(req) : null;
+    if (AUTH_ON && !OPEN_CROWD && !email) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return; }
+    wss.handleUpgrade(req, socket, head, (ws) => { ws._email = email; wss.emit('connection', ws, req); });
   });
 }
 
@@ -229,6 +293,8 @@ const broadcastAnchors = () => broadcast(anchorsMsg());
 
 wss.on('connection', (ws, req) => {
   ws.isLocal = TRUST_LOCAL && isLocalhost(req); // localhost = the organizer's own machine
+  ws.user = ws._email || null;                  // signed-in account (if AUTH is on)
+  if (ws.user) ws.isDirector = true;            // a trusted login can drive the show — no key needed
   ws.on('message', (raw) => {
     const now = Date.now();                       // simple per-connection rate limit
     if (now - (ws._win || 0) > 1000) { ws._win = now; ws._n = 0; }
@@ -361,6 +427,13 @@ httpServer.listen(HTTP_PORT, () => {
   console.log(`  Phones should open:             ${joinURL()}`);
   if (TRUST_LOCAL) console.log('  Director: localhost is auto-authorized — no key needed here.');
   console.log(`  Remote director (LAN/web): append ?key=${HOST_KEY}`);
+  if (AUTH_ON) {
+    console.log(`  Login: REQUIRED — ${USERS.size} seeded account(s): ${[...USERS.keys()].join(', ')}`);
+    console.log(`         Signed-in users are directors automatically (no key needed).`);
+    if (OPEN_CROWD) console.log('         OPEN_CROWD=1 — spectators may join without a login; controls still require one.');
+  } else {
+    console.log('  Login: OFF (set AUTH_USERS="email:pw,…" to require sign-in).');
+  }
   if (HTTP_ONLY) console.log('  Mode: HTTP_ONLY (a managed proxy/CDN terminates TLS).');
 });
 if (httpsServer) {

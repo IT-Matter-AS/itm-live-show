@@ -78,9 +78,16 @@ some browsers). Easiest first:
   `PUBLIC_URL` to the assigned `https://…onrender.com` and redeploy.
 
 In deploy modes the app serves plain HTTP behind the platform's TLS edge
-(`HTTP_ONLY=1`) and **requires the director key** (`HOST_KEY`) for control —
-spectators get the keyless QR. On your own laptop, `localhost` is auto-trusted as
-director (no key needed).
+(`HTTP_ONLY=1`). Access control, in order of strength:
+
+- **Login (`AUTH_USERS="email:pw,email:pw"`).** Locks the whole deployment to
+  named accounts — the QR/share URL only works for people who can sign in. A
+  signed-in user is a director automatically (no key needed). Set `OPEN_CROWD=1`
+  to let spectators join without a login while control still requires one. The
+  Hetzner deploy turns this on and seeds the accounts for you.
+- **Director key (`HOST_KEY`).** Without login, control messages require this key
+  (`?key=…` in the URL); spectators get the keyless QR.
+- On your own laptop, `localhost` is auto-trusted as director (no key needed).
 
 ## Synchronization & accuracy
 

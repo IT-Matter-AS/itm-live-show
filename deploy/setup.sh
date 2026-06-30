@@ -31,37 +31,68 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 docker compose version >/dev/null 2>&1 || { echo "!! 'docker compose' plugin missing — update Docker."; exit 1; }
 
-# --- env (keep an existing HOST_KEY so the link stays stable across re-runs) --
+# --- env (keep existing secrets so links/passwords stay stable across re-runs) -
 ENV_FILE="deploy/.env"
-if [ -z "${HOST_KEY:-}" ] && [ -f "$ENV_FILE" ] && grep -q '^HOST_KEY=' "$ENV_FILE"; then
-  HOST_KEY="$(grep '^HOST_KEY=' "$ENV_FILE" | cut -d= -f2)"
-fi
+getenv() { [ -f "$ENV_FILE" ] && grep "^$1=" "$ENV_FILE" | head -1 | cut -d= -f2- || true; }
+randpw() { LC_ALL=C tr -dc 'a-hjkmnp-z2-9' </dev/urandom | head -c 10; }   # no ambiguous chars / no comma
+
+[ -z "${HOST_KEY:-}" ] && HOST_KEY="$(getenv HOST_KEY)"
 HOST_KEY="${HOST_KEY:-$(head -c 5 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
-printf 'SITE_ADDRESS=%s\nHOST_KEY=%s\n' "$SITE_ADDRESS" "$HOST_KEY" > "$ENV_FILE"
+
+# Seeded accounts that may sign in. Re-runs keep existing passwords (so links you
+# already shared keep working); a brand-new email gets a fresh random password.
+SEED_EMAILS="monsterhagen@gmail.com botn@itmatter.no hagen@itmatter.no"
+AUTH_USERS="${AUTH_USERS:-}"
+if [ -z "$AUTH_USERS" ]; then
+  PREV_AUTH="$(getenv AUTH_USERS)"
+  PAIRS=""
+  for email in $SEED_EMAILS; do
+    pw=""
+    # reuse this email's password from a previous run if present
+    case ",$PREV_AUTH," in *",$email:"*)
+      pw="$(printf '%s' "$PREV_AUTH" | tr ',' '\n' | grep "^$email:" | head -1 | cut -d: -f2-)";;
+    esac
+    [ -z "$pw" ] && pw="$(randpw)"
+    PAIRS="${PAIRS:+$PAIRS,}$email:$pw"
+  done
+  AUTH_USERS="$PAIRS"
+fi
+
+{ printf 'SITE_ADDRESS=%s\n' "$SITE_ADDRESS"
+  printf 'HOST_KEY=%s\n' "$HOST_KEY"
+  printf 'AUTH_USERS=%s\n' "$AUTH_USERS"
+  printf 'OPEN_CROWD=%s\n' "${OPEN_CROWD:-}"
+} > "$ENV_FILE"
+chmod 600 "$ENV_FILE" 2>/dev/null || true
 
 # --- build & launch ----------------------------------------------------------
 echo ">> Building & starting (first build takes a minute)…"
 docker compose -f deploy/docker-compose.yml --env-file "$ENV_FILE" up -d --build
 
-cat <<EOF
-
-──────────────────────────────────────────────────────────────────────────
-  ✅ itm-live-show is live   (the first HTTPS certificate can take ~30-60s —
-     if the link looks insecure for a moment, wait and refresh once)
-
-  SEND YOUR FRIEND THIS ONE LINK  (it is the show + the on-screen QR):
-      https://${SITE_ADDRESS}/preview?key=${HOST_KEY}
-
-  Phones in the crowd just scan that QR, or open:
-      https://${SITE_ADDRESS}/
-
-  Optional consoles:
-      Director/host panel:  https://${SITE_ADDRESS}/host?key=${HOST_KEY}
-      Health check:         https://${SITE_ADDRESS}/healthz
-
-  Manage later (from the repo dir on this server):
-      docker compose -f deploy/docker-compose.yml logs -f     # watch logs
-      docker compose -f deploy/docker-compose.yml restart     # restart
-      git pull && bash deploy/setup.sh                        # update to latest
-──────────────────────────────────────────────────────────────────────────
-EOF
+echo
+echo "──────────────────────────────────────────────────────────────────────────"
+echo "  ✅ itm-live-show is live   (the first HTTPS certificate can take ~30-60s —"
+echo "     if the link looks insecure for a moment, wait and refresh once)"
+echo
+echo "  THE APP IS PRIVATE — these accounts can sign in (send each person theirs):"
+printf '%s' "$AUTH_USERS" | tr ',' '\n' | while IFS=: read -r email pw; do
+  printf '      %-26s  password: %s\n' "$email" "$pw"
+done
+echo
+echo "  SEND YOUR FRIEND THIS LINK (it is the show — he signs in, then runs it):"
+echo "      https://${SITE_ADDRESS}/preview"
+echo
+echo "  Phones in the crowd scan the on-screen QR, or open (they sign in too):"
+echo "      https://${SITE_ADDRESS}/"
+echo
+echo "  Health check:  https://${SITE_ADDRESS}/healthz"
+echo "  Sign out:      https://${SITE_ADDRESS}/logout"
+echo
+echo "  Manage later (from the repo dir on this server):"
+echo "      docker compose -f deploy/docker-compose.yml logs -f     # watch logs"
+echo "      docker compose -f deploy/docker-compose.yml restart     # restart"
+echo "      git pull && bash deploy/setup.sh                        # update to latest"
+echo
+echo "  (Credentials are saved in deploy/.env. Re-running keeps them. To let the"
+echo "   crowd join WITHOUT a login for a real show: OPEN_CROWD=1 bash deploy/setup.sh)"
+echo "──────────────────────────────────────────────────────────────────────────"

@@ -14,6 +14,8 @@ services:
       PORT: "3000"
       PUBLIC_URL: "https://${SITE_ADDRESS}"   # so the QR points at the real HTTPS URL
       HOST_KEY: "${HOST_KEY}"                  # director key (remote control auth)
+      AUTH_USERS: "${AUTH_USERS}"             # seeded logins ("email:pw,…") — locks the app
+      OPEN_CROWD: "${OPEN_CROWD:-}"           # set to 1 to let the crowd join without a login
     expose:
       - "3000"                                # private — only Caddy reaches it
     restart: unless-stopped

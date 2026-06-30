@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node server/server.js",
     "dev": "node --watch server/server.js",
-    "test": "node test/dsp.test.mjs"
+    "test": "node test/dsp.test.mjs && node test/auth.test.mjs"
   },
   "dependencies": {
     "qrcode": "^1.5.4",

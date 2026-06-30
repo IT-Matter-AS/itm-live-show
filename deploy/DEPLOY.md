@@ -18,7 +18,10 @@ In the [Hetzner Cloud console](https://console.hetzner.com/projects/15174242):
 1. **Add Server**.
 2. **Location:** anything close to you (e.g. Nuremberg / Helsinki).
 3. **Image:** Ubuntu 24.04.
-4. **Type:** the cheapest **CX22** (2 vCPU / 4 GB) is plenty.
+4. **Type:** pick **Arm64 (Ampere)** — the **CAX11** (2 vCPU / 4 GB) is the
+   cheapest and is plenty. Arm is cheaper than the Intel/AMD x86 types and the
+   app's images (Node, Caddy) are multi-arch, so it just works. (An x86 **CX22**
+   is fine too if you prefer — same steps.)
 5. **SSH key:** add yours (recommended), or let it email a root password.
 6. Create it, and copy the server's **public IPv4** (e.g. `91.99.12.34`).
 
@@ -42,22 +45,39 @@ The script installs Docker, builds the app, fetches the HTTPS cert, and prints
 your links. The first certificate can take ~30–60s — if the page looks insecure
 for a moment, wait and refresh once.
 
-## 3. Send your friend ONE link
+## 3. Sign-in is required (private app)
 
-The script prints it. It looks like:
+The app is **locked to three accounts** so only your people can open it. The
+script seeds them and **prints each email with its generated password**:
 
 ```
-https://91-99-12-34.sslip.io/preview?key=ab12cd34ef
+monsterhagen@gmail.com      password: c32x3tp7ae
+botn@itmatter.no            password: 6tgpmc4q79
+hagen@itmatter.no           password: hydg88fnjb
 ```
 
-That single link is **the show**: he opens it on his Mac, clicks **Capture
-music**, plays a song, and the on-screen **QR code** is what the crowd scans.
-Phones that scan it open `https://…sslip.io/` and light up — no install, no
-warning. (`sslip.io` is just a free DNS trick that maps the name back to your
-server's IP so Let's Encrypt can issue a real cert — nothing to set up.)
+Send each person their own email + password. (Passwords are saved in
+`deploy/.env` and survive re-runs, so the credentials you hand out keep working.
+To change one, edit the `AUTH_USERS=` line in `deploy/.env` and
+`docker compose -f deploy/docker-compose.yml up -d`.)
 
-Keep the `?key=…` part private-ish — it's what authorizes *controlling* the
-show. The crowd link (without the key) can only watch and join.
+## 4. Send your friend the link
+
+```
+https://91-99-12-34.sslip.io/preview
+```
+
+He opens it on his Mac, **signs in**, clicks **Capture music**, plays a song,
+and the on-screen **QR code** is what the crowd scans. Phones that scan it open
+`https://…sslip.io/`, sign in, and light up — no install, no cert warning.
+(`sslip.io` is just a free DNS trick that maps the name back to your server's IP
+so Let's Encrypt can issue a real cert — nothing to set up.) A signed-in user
+can control the show directly — no `?key=` needed.
+
+> **Real public show later?** Requiring every phone to sign in is great for a
+> private test but not for an open crowd. Run `OPEN_CROWD=1 bash deploy/setup.sh`
+> to let spectators join with **no login**, while running the show still
+> requires one. To drop logins entirely, blank the `AUTH_USERS=` line.
 
 ---
 
