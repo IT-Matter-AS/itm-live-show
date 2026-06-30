@@ -1,6 +1,6 @@
 import { Localizer } from '/localizer.js';
 import { render, resolveScene, beatEnvelope, idleEnvelope, DEMO_BPM } from '/show.js';
-import { AudioReactor, AUDIO, makeChirpTemplate, locateFromFrame, calibrateOffsets, ClockFilter, PhaseLock, OneEuro, foldPhase, circMean, depthOf } from '/dsp.js';
+import { AudioReactor, AUDIO, DETECT_LATENCY_MS, makeChirpTemplate, locateFromFrame, calibrateOffsets, ClockFilter, PhaseLock, OneEuro, foldPhase, circMean, depthOf } from '/dsp.js';
 
 const stage = document.getElementById('stage');
 const joinPanel = document.getElementById('join');
@@ -34,6 +34,7 @@ let hostBeat = null;   // { startAt(server ms), period } — demo-beat fallback
 let sceneState = null; // director directive
 let musicFeed = null;  // { beatAt, period, level, at } — live capture from the visualizer
 let curFeed = 'idle';  // which drive is active (for diagnostics)
+let lastOnsetMs = 0;   // performance.now() of the last detected onset
 
 // Positioning + venue.
 let anchors = [], speakers = [], venue = { width: 10, height: 7 }, beaconOffsets = {};
@@ -150,7 +151,9 @@ function sampleAudio() {
 // speaker layout, subtract the sound's travel time so we lock to the SOURCE beat
 // — making the whole crowd flash together regardless of distance to the PA.
 function onOnset() {
-  let t = serverNow() / 1000;
+  lastOnsetMs = performance.now();
+  const trueMs = serverNow() - DETECT_LATENCY_MS; // align to the true audio beat
+  let t = trueMs / 1000;
   if (realFresh() && speakers.length) {
     let d = Infinity;
     for (const sp of speakers) d = Math.min(d, Math.hypot(realPos.x - sp.x, realPos.y - sp.y));
@@ -160,7 +163,7 @@ function onOnset() {
 
   // Shared-audio depth: record this onset's phase against the global beat grid.
   const period = depthInfo?.period || 60000 / (sharedBpm || DEMO_BPM);
-  onsetPhases.push(foldPhase(serverNow(), period));
+  onsetPhases.push(foldPhase(trueMs, period));
   if (onsetPhases.length > 6) onsetPhases.shift();
   myPhase = circMean(onsetPhases, period);
 }
@@ -197,6 +200,9 @@ function detectPosition() {
   }
 }
 setInterval(detectPosition, 300);
+// Analyse audio on a fixed fast clock, independent of the render frame rate — so
+// beat timing stays tight even if rendering hitches.
+setInterval(() => { if (analyser) sampleAudio(); }, 11);
 
 // --- Join ------------------------------------------------------------------
 joinBtn.addEventListener('click', () => {
@@ -212,8 +218,26 @@ joinBtn.addEventListener('click', () => {
 // --- Render loop -----------------------------------------------------------
 function loop() {
   requestAnimationFrame(loop);
-  sampleAudio();
   const t = serverNow() / 1000;
+
+  const musicFresh = musicFeed && Date.now() - musicFeed.at < 3000 && musicFeed.level > 0.06;
+  const hearingMusic = micState === 'listening' && reactor.level > 0.06;
+  const silent = !musicFresh && !hearingMusic && !hostBeat; // no music anywhere
+  if (meterFill) meterFill.style.width = `${Math.round(reactor.level * 100)}%`;
+
+  // When the music stops, drop to a calm idle: dim, slow breath, NO scene motion
+  // (scene sweeps/rotations are clock-driven, so we must not run them when quiet).
+  if (silent) {
+    curFeed = 'idle';
+    const b = 7 + 5 * (0.5 + 0.5 * Math.sin(t * 0.7));
+    stage.style.backgroundColor = `hsl(258 45% ${b.toFixed(1)}%)`;
+    if (glowEl) glowEl.style.opacity = '0';
+    if (diagOn && diagEl) diagEl.textContent = diagText();
+    const q0 = clock.quality(Date.now());
+    const m0 = micState === 'listening' ? 'mic ' + (audioCtx?.state || '?') : (micState === 'denied' ? 'mic FAILED' : 'mic —');
+    statusEl.textContent = `${m0}  lvl ${(reactor.level * 100) | 0}%\nidle · quiet — waiting for music\n${wakeLabel()}   clk ±${Number.isFinite(q0) ? (q0 | 0) : '?'}ms   (tap for details)`;
+    return;
+  }
 
   // Position priority: a fresh beacon fix, else shared-audio depth, else simulated.
   myDepth = (depthInfo?.ok && myPhase != null) ? depthOf(myPhase, depthInfo.lead, depthInfo.spread, depthInfo.period) : null;
@@ -224,28 +248,22 @@ function loop() {
   else { norm = localizer?.normalized(); posSrc = 'sim'; }
   if (!norm) return;
 
-  // The reactor follows the music's ACTUAL transients — the robust primary
-  // driver that tracks the song on every device (iPhone included). The phase
-  // lock / shared tempo only inform scene motion speed (bpm), never the flash.
-  // When the room goes quiet (level below the gate) we fade to a calm idle
-  // breathing instead of flashing on noise.
-  // Drive priority: the visualizer's central capture (whole crowd in unison) >
-  // this phone's own mic > host demo beat > calm idle. Each is level-gated so a
-  // silent room fades to idle instead of flashing.
-  const musicFresh = musicFeed && Date.now() - musicFeed.at < 3000 && musicFeed.level > 0.06;
-  const hearingMusic = micState === 'listening' && reactor.level > 0.06;
+  // Drive: central capture (predictive, unison) > own mic (predictive when a
+  // confident tempo lock exists — anticipates the beat with no detection lag —
+  // else reactive) > host demo beat.
   let pulse, level;
   if (musicFresh) {
     const ph = ((serverNow() - musicFeed.beatAt) % musicFeed.period + musicFeed.period) % musicFeed.period;
     pulse = beatEnvelope(ph / 1000, musicFeed.period / 1000); level = musicFeed.level; curFeed = 'central';
   } else if (hearingMusic) {
-    pulse = reactor.pulse; level = reactor.level; curFeed = 'mic';
-  } else if (hostBeat) {
+    const sb = phase.sinceBeat(t);
+    const locked = reactor.bpm && performance.now() - lastOnsetMs < 1500 && sb != null;
+    pulse = locked ? beatEnvelope(sb, phase.period) : reactor.pulse;
+    level = reactor.level; curFeed = locked ? 'mic·lock' : 'mic';
+  } else {
     const dt = (serverNow() - hostBeat.startAt) / 1000;
     const ph = ((dt % hostBeat.period) + hostBeat.period) % hostBeat.period;
     pulse = dt >= 0 ? beatEnvelope(ph, hostBeat.period) : 0; level = 0.45; curFeed = 'host';
-  } else {
-    pulse = 0; level = idleEnvelope(t); curFeed = 'idle'; // silence -> gentle breathing
   }
 
   const { scene, palette } = resolveScene(sceneState, t);
@@ -253,7 +271,6 @@ function loop() {
     nx: norm.nx, ny: norm.ny, t, pulse, level,
     bpm: sharedBpm || reactor.bpm || DEMO_BPM, react: sceneState?.react, image: sceneState?.image,
   });
-  if (meterFill) meterFill.style.width = `${Math.round(reactor.level * 100)}%`;
   if (glowEl) glowEl.style.opacity = String(Math.min(0.55, pulse * 0.5)); // beat bloom
   if (scene !== lastSceneName) { lastSceneName = scene; showToast(`✨ ${scene}`); }
   if (diagOn && diagEl) diagEl.textContent = diagText();

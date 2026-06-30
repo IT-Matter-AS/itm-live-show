@@ -4,6 +4,11 @@
 export const SPEED_OF_SOUND = 343; // m/s
 export const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
+// Estimated end-to-end detection latency (analyser window + processing). We
+// timestamp beats this much EARLIER so the predicted beat grid lands on the true
+// audio beat instead of trailing it — the single biggest "tightness" lever.
+export const DETECT_LATENCY_MS = 25;
+
 // Audio parameters shared by emitters (beacons) and listeners (phones).
 export const AUDIO = {
   // Near-ultrasonic chirp band: mostly inaudible to adults, within phone
@@ -323,8 +328,9 @@ export class AudioReactor {
       this.pulse = 1;
       if (this._ivs.length >= 3) {
         const s = [...this._ivs].sort((a, b) => a - b);
-        const v = 60000 / s[s.length >> 1];
-        if (v >= 50 && v <= 200) this.bpm = Math.round(v);
+        let v = 60000 / s[s.length >> 1];
+        while (v < 60) v *= 2; while (v > 180) v /= 2; // mild octave fold -> stay on the beat
+        this.bpm = Math.round(v);
       }
     }
     this._fluxPrev = flux;

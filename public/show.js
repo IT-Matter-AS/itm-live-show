@@ -156,7 +156,7 @@ export function resolveScene(state, tSec) {
 // Beat/idle helpers for the host demo-beat fallback drive.
 export function beatEnvelope(dt, period) {
   if (dt < 0) return 0;
-  const tau = Math.max(0.06, (period || 0.5) * 0.22);
+  const tau = Math.max(0.05, (period || 0.5) * 0.18); // snappier = reads as tighter
   return Math.exp(-dt / tau);
 }
 export function idleEnvelope(t) { return 0.22 + 0.16 * Math.sin(t * 1.6); }

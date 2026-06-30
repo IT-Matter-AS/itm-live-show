@@ -1,5 +1,5 @@
 import { render, resolveScene, beatEnvelope, ALL_SCENES, PALETTE_NAMES } from '/show.js';
-import { AudioReactor } from '/dsp.js';
+import { AudioReactor, ClockFilter, DETECT_LATENCY_MS } from '/dsp.js';
 
 // A grid of virtual phones running the EXACT scene code real phones run — the
 // design studio. Every control here broadcasts a directive, so this is also the
@@ -11,8 +11,8 @@ const g = canvas.getContext('2d');
 const label = document.getElementById('label');
 
 const cols = 48, rows = 27;
-let offset = 0, bestRtt = Infinity;
-const serverNow = () => Date.now() + offset;
+const clock = new ClockFilter();
+const serverNow = () => Date.now() + clock.offsetAt(Date.now());
 let state = { scene: 'auto', palette: 'auto', react: { brightness: 1, beat: 1, speed: 1 }, image: null, epoch: Date.now() };
 
 // --- Realtime (reflect + control) ------------------------------------------
@@ -23,7 +23,7 @@ function connect() {
   ws.addEventListener('open', () => { ws.send(JSON.stringify({ type: 'host' })); sync(); });
   ws.addEventListener('message', (e) => {
     let m; try { m = JSON.parse(e.data); } catch { return; }
-    if (m.type === 'pong') { const t1 = Date.now(), r = t1 - m.t0; if (r < bestRtt) { bestRtt = r; offset = m.ts - (m.t0 + t1) / 2; } }
+    if (m.type === 'pong') clock.add(m.t0, m.ts, Date.now());
     else if (m.type === 'scene') { state = { react: { brightness: 1, beat: 1, speed: 1 }, ...m }; syncControls(); }
   });
   ws.addEventListener('close', () => setTimeout(connect, 1500));
@@ -35,6 +35,7 @@ function sync(n = 10) {
   tick();
 }
 connect();
+setInterval(() => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'ping', t0: Date.now() })); }, 3000);
 
 function setLook(patch) {
   state = { ...state, ...patch, epoch: Date.now() };
@@ -156,7 +157,15 @@ document.getElementById('capTap').onclick = () => {
     ivs.sort((a, b) => a - b); const med = ivs[ivs.length >> 1];
     if (med > 250 && med < 1500) { tapPeriod = med; tapBpm = Math.round(60000 / med); }
   }
+  broadcastMusic(); // push the tap beat out immediately
 };
+
+// Broadcast the current beat feed to every phone (from capture or taps).
+function broadcastMusic() {
+  if (!ws || ws.readyState !== 1) return;
+  if (listening) ws.send(JSON.stringify({ type: 'music', beatAt: lastBeatServer, period: 60000 / (reactor.bpm || 120), level: reactor.level, bpm: reactor.bpm || 0 }));
+  else if (tapMode) ws.send(JSON.stringify({ type: 'music', beatAt: tapBeat, period: tapPeriod, level: 0.7, bpm: tapBpm }));
+}
 
 function sampleMusic() {
   if (!analyser) return;
@@ -165,15 +174,14 @@ function sampleMusic() {
   const rms = Math.sqrt(s / byteTime.length);
   analyser.getByteFrequencyData(freqData);
   reactor.update(rms, freqData, performance.now()); // spectral-flux onset detection
-  if (reactor.beats > lastBeats) { lastBeats = reactor.beats; lastBeatServer = serverNow(); }
+  if (reactor.beats > lastBeats) {
+    lastBeats = reactor.beats;
+    lastBeatServer = serverNow() - DETECT_LATENCY_MS; // align to the true beat
+    broadcastMusic();                                 // send the beat immediately (tight)
+  }
 }
-
-// Broadcast the beat feed (~5 Hz) — from audio capture or from taps.
-setInterval(() => {
-  if (!ws || ws.readyState !== 1) return;
-  if (listening) ws.send(JSON.stringify({ type: 'music', beatAt: lastBeatServer, period: 60000 / (reactor.bpm || 120), level: reactor.level, bpm: reactor.bpm || 0 }));
-  else if (tapMode) ws.send(JSON.stringify({ type: 'music', beatAt: tapBeat, period: tapPeriod, level: 0.7, bpm: tapBpm }));
-}, 200);
+setInterval(() => { if (analyser) sampleMusic(); }, 11); // fast sampling, render-independent
+setInterval(broadcastMusic, 200);                        // heartbeat keeps level fresh
 
 function syncControls() {
   for (const s in sceneBtns) sceneBtns[s].classList.toggle('on', s === state.scene);
@@ -198,31 +206,39 @@ function frame() {
   requestAnimationFrame(frame);
   if (canvas.width < 2) resize();
   const t = serverNow() / 1000;
-  let pulse, level;
+  let pulse, level, quiet = false;
   if (listening) {
-    sampleMusic();
-    pulse = reactor.pulse; level = reactor.level;             // real captured audio
-    capEl.textContent = `🎵 capturing · level ${(reactor.level * 100) | 0}% · ${reactor.bpm ? '~' + reactor.bpm + ' BPM' : '…'} → broadcasting`;
+    if (reactor.level < 0.06) {                                // music stopped -> quiet
+      quiet = true; pulse = 0; level = 0;
+      capEl.textContent = '🎵 capturing · quiet — music stopped';
+    } else {
+      pulse = reactor.pulse; level = reactor.level;            // real captured audio
+      capEl.textContent = `🎵 capturing · level ${(reactor.level * 100) | 0}% · ${reactor.bpm ? '~' + reactor.bpm + ' BPM' : '…'} → broadcasting`;
+    }
   } else if (tapMode) {
     const ph = ((serverNow() - tapBeat) % tapPeriod + tapPeriod) % tapPeriod;
     pulse = beatEnvelope(ph / 1000, tapPeriod / 1000); level = 0.7;
     capEl.textContent = `👆 tap tempo · ${tapBpm} BPM → broadcasting (tap again to re-sync)`;
   } else {
-    pulse = beatEnvelope(t % 0.5, 0.5);                       // synth preview beat
+    pulse = beatEnvelope(t % 0.5, 0.5);                        // synth preview beat
     level = 0.4 + 0.3 * (0.5 + 0.5 * Math.sin(t * 0.55));
     // don't touch capEl here — it carries the idle prompt or an error message
   }
 
   const { scene, palette } = resolveScene(state, t);
-  label.textContent = `${scene} · ${typeof palette === 'string' ? palette : 'custom'}`;
+  label.textContent = quiet ? 'idle · quiet' : `${scene} · ${typeof palette === 'string' ? palette : 'custom'}`;
+  const showBpm = (listening && reactor.bpm) || (tapMode && tapBpm) || 120;
 
   const W = canvas.width, H = canvas.height;
   g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
   const cw = W / cols, ch = H / rows, rad = Math.min(cw, ch) * 0.36;
+  const idleB = 7 + 5 * (0.5 + 0.5 * Math.sin(t * 0.7)); // calm breath when quiet
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const nx = (c + 0.5) / cols, ny = (r + 0.5) / rows;
-      g.fillStyle = render(scene, palette, { nx, ny, t, pulse, level, bpm: 120, react: state.react, image: state.image });
+      g.fillStyle = quiet
+        ? `hsl(258 45% ${idleB.toFixed(1)}%)`
+        : render(scene, palette, { nx, ny, t, pulse, level, bpm: showBpm, react: state.react, image: state.image });
       g.beginPath();
       g.arc(c * cw + cw / 2, r * ch + ch / 2, rad, 0, 6.2832);
       g.fill();
