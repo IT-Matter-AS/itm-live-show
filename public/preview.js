@@ -1,4 +1,5 @@
 import { render, resolveScene, beatEnvelope, ALL_SCENES, PALETTE_NAMES } from '/show.js';
+import { AudioReactor } from '/dsp.js';
 
 // A grid of virtual phones running the EXACT scene code real phones run — the
 // design studio. Every control here broadcasts a directive, so this is also the
@@ -99,6 +100,49 @@ for (const sym of ['❤', '★', '➤', '▲', '☺']) {
   presetBox.appendChild(b);
 }
 
+// --- Capture the live music and broadcast it to every phone ----------------
+// The laptop running the visualizer is usually near the speakers, so its mic
+// gets the cleanest beat — better than scattered phones. We detect the beat here
+// and broadcast {beatAt, period, level} so the whole crowd flashes in unison.
+const reactor = new AudioReactor();
+let audioCtx = null, analyser = null, byteTime = null, freqData = null;
+let listening = false, lastBeats = 0, lastBeatServer = 0;
+const captureBtn = document.getElementById('capture');
+const capEl = document.getElementById('cap');
+
+captureBtn.addEventListener('click', async () => {
+  if (listening) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    await audioCtx.resume?.();
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    const src = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser(); analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0;
+    byteTime = new Uint8Array(analyser.fftSize); freqData = new Uint8Array(analyser.frequencyBinCount);
+    const mute = audioCtx.createGain(); mute.gain.value = 0;
+    src.connect(analyser); analyser.connect(mute).connect(audioCtx.destination);
+    listening = true; captureBtn.classList.add('on'); captureBtn.textContent = '🎤 capturing → crowd';
+  } catch { capEl.textContent = 'mic blocked'; }
+});
+
+function sampleMusic() {
+  if (!analyser) return;
+  analyser.getByteTimeDomainData(byteTime);
+  let s = 0; for (let i = 0; i < byteTime.length; i++) { const v = (byteTime[i] - 128) / 128; s += v * v; }
+  const rms = Math.sqrt(s / byteTime.length);
+  analyser.getByteFrequencyData(freqData);
+  const binHz = audioCtx.sampleRate / analyser.fftSize, loBins = Math.max(2, Math.round(180 / binHz));
+  let lo = 0; for (let i = 1; i <= loBins; i++) lo += freqData[i]; lo /= loBins * 255;
+  reactor.update(rms, lo, performance.now());
+  if (reactor.beats > lastBeats) { lastBeats = reactor.beats; lastBeatServer = serverNow(); }
+}
+
+// Broadcast the captured beat feed (~5 Hz; phones render the pulse locally).
+setInterval(() => {
+  if (!listening || !ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({ type: 'music', beatAt: lastBeatServer, period: 60000 / (reactor.bpm || 120), level: reactor.level, bpm: reactor.bpm || 0 }));
+}, 200);
+
 function syncControls() {
   for (const s in sceneBtns) sceneBtns[s].classList.toggle('on', s === state.scene);
   for (const p in palBtns) palBtns[p].classList.toggle('on', p === state.palette);
@@ -122,8 +166,16 @@ function frame() {
   requestAnimationFrame(frame);
   if (canvas.width < 2) resize();
   const t = serverNow() / 1000;
-  const pulse = beatEnvelope(t % 0.5, 0.5);                    // synth 120 BPM drive
-  const level = 0.4 + 0.3 * (0.5 + 0.5 * Math.sin(t * 0.55));  // slow energy swell
+  let pulse, level;
+  if (listening) {
+    sampleMusic();
+    pulse = reactor.pulse; level = reactor.level;             // the REAL captured music
+    capEl.textContent = `level ${(reactor.level * 100) | 0}%  ${reactor.bpm ? '~' + reactor.bpm + ' BPM' : '…'}  → broadcasting`;
+  } else {
+    pulse = beatEnvelope(t % 0.5, 0.5);                       // synth preview beat
+    level = 0.4 + 0.3 * (0.5 + 0.5 * Math.sin(t * 0.55));
+    capEl.textContent = 'tap to capture the room’s music and drive the crowd';
+  }
 
   const { scene, palette } = resolveScene(state, t);
   label.textContent = `${scene} · ${typeof palette === 'string' ? palette : 'custom'}`;

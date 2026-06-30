@@ -275,6 +275,15 @@ wss.on('connection', (ws) => {
       case 'phase': // A phone's beat-phase signature -> shared-audio co-location.
         if (Number.isFinite(msg.p)) { phaseReports.push({ p: msg.p, t: Date.now() }); if (phaseReports.length > 1000) phaseReports.shift(); }
         break;
+      case 'music': // The visualizer captured the live music — relay the beat feed.
+        broadcast({
+          type: 'music',
+          beatAt: Number(msg.beatAt) || Date.now(),
+          period: Number(msg.period) || 500,
+          level: Math.max(0, Math.min(1, Number(msg.level) || 0)),
+          bpm: Number(msg.bpm) || 0,
+        });
+        break;
       case 'calib': // Beacon emit-latency calibration from a known-position phone.
         beaconOffsets = { ...beaconOffsets, ...(msg.offsets || {}) };
         saveVenueConfig();

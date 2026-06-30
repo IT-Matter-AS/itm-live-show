@@ -32,6 +32,8 @@ let micState = 'off', micError = '';
 
 let hostBeat = null;   // { startAt(server ms), period } — demo-beat fallback
 let sceneState = null; // director directive
+let musicFeed = null;  // { beatAt, period, level, at } — live capture from the visualizer
+let curFeed = 'idle';  // which drive is active (for diagnostics)
 
 // Positioning + venue.
 let anchors = [], speakers = [], venue = { width: 10, height: 7 }, beaconOffsets = {};
@@ -79,6 +81,7 @@ function onMessage(e) {
     if (m.speakers) speakers = m.speakers;
     if (m.offsets) beaconOffsets = m.offsets;
   } else if (m.type === 'depth') depthInfo = m;
+  else if (m.type === 'music') musicFeed = { beatAt: m.beatAt, period: m.period, level: m.level, at: Date.now() };
 }
 function ping() { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'ping', t0: Date.now() })); }
 function burstPing(n = 12) { let i = 0; const tick = () => { if (i++ >= n) return; ping(); setTimeout(tick, 120); }; tick(); }
@@ -229,16 +232,23 @@ function loop() {
   // lock / shared tempo only inform scene motion speed (bpm), never the flash.
   // When the room goes quiet (level below the gate) we fade to a calm idle
   // breathing instead of flashing on noise.
+  // Drive priority: the visualizer's central capture (whole crowd in unison) >
+  // this phone's own mic > host demo beat > calm idle. Each is level-gated so a
+  // silent room fades to idle instead of flashing.
+  const musicFresh = musicFeed && Date.now() - musicFeed.at < 3000 && musicFeed.level > 0.06;
   const hearingMusic = micState === 'listening' && reactor.level > 0.06;
   let pulse, level;
-  if (hearingMusic) {
-    pulse = reactor.pulse; level = reactor.level;
+  if (musicFresh) {
+    const ph = ((serverNow() - musicFeed.beatAt) % musicFeed.period + musicFeed.period) % musicFeed.period;
+    pulse = beatEnvelope(ph / 1000, musicFeed.period / 1000); level = musicFeed.level; curFeed = 'central';
+  } else if (hearingMusic) {
+    pulse = reactor.pulse; level = reactor.level; curFeed = 'mic';
   } else if (hostBeat) {
     const dt = (serverNow() - hostBeat.startAt) / 1000;
     const ph = ((dt % hostBeat.period) + hostBeat.period) % hostBeat.period;
-    pulse = dt >= 0 ? beatEnvelope(ph, hostBeat.period) : 0; level = 0.45;
+    pulse = dt >= 0 ? beatEnvelope(ph, hostBeat.period) : 0; level = 0.45; curFeed = 'host';
   } else {
-    pulse = 0; level = idleEnvelope(t); // silence / no mic -> gentle breathing
+    pulse = 0; level = idleEnvelope(t); curFeed = 'idle'; // silence -> gentle breathing
   }
 
   const { scene, palette } = resolveScene(sceneState, t);
@@ -272,6 +282,7 @@ function diagText() {
   const L = [];
   L.push(`mic    : ${micState}${micState === 'listening' ? ' (' + (audioCtx?.state || '?') + ')' : ''}${micError ? ' [' + micError + ']' : ''}`);
   L.push(`audio  : level ${(reactor.level * 100) | 0}%  pulse ${(reactor.pulse * 100) | 0}%`);
+  L.push(`drive  : ${curFeed}${curFeed === 'central' ? ' (visualizer feed)' : ''}`);
   L.push(`tempo  : local ${reactor.bpm || '-'}  shared ${sharedBpm || '-'} bpm`);
   L.push(`clock  : ±${Number.isFinite(q) ? (q | 0) : '?'} ms`);
   L.push(`pos    : ${calPos ? 'CALIBRATING' : (rf ? 'ACOUSTIC' : 'sim')}  conf ${(realConf * 100) | 0}%`);
