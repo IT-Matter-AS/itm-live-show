@@ -27,9 +27,24 @@ SITE_ADDRESS="${SITE_ADDRESS:-${IP}.sslip.io}"
 # --- Docker (install if missing) ---------------------------------------------
 if ! command -v docker >/dev/null 2>&1; then
   echo ">> Installing Docker…"
-  curl -fsSL https://get.docker.com | sh
+  curl -fsSL https://get.docker.com | sh || true   # may not support a brand-new Ubuntu yet
 fi
-docker compose version >/dev/null 2>&1 || { echo "!! 'docker compose' plugin missing — update Docker."; exit 1; }
+# Make sure we actually have engine + compose + buildx. Fall back to Ubuntu's own
+# packages — these work even on a just-released Ubuntu the Docker repo hasn't
+# caught up with yet (e.g. 26.04 in its first weeks).
+if ! docker compose version >/dev/null 2>&1 || ! docker buildx version >/dev/null 2>&1; then
+  echo ">> Installing Docker from the Ubuntu repositories…"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update
+  apt-get install -y docker.io docker-compose-v2 docker-buildx \
+    || apt-get install -y docker.io docker-compose-v2   # buildx is nice-to-have; legacy builder works too
+fi
+systemctl enable --now docker >/dev/null 2>&1 || true
+docker compose version >/dev/null 2>&1 || {
+  echo "!! Docker Compose still unavailable. Install it manually, then re-run:"
+  echo "   https://docs.docker.com/engine/install/ubuntu/"
+  exit 1
+}
 
 # --- env (keep existing secrets so links/passwords stay stable across re-runs) -
 ENV_FILE="deploy/.env"
