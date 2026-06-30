@@ -49,7 +49,7 @@ docker compose version >/dev/null 2>&1 || {
 # --- env (keep existing secrets so links/passwords stay stable across re-runs) -
 ENV_FILE="deploy/.env"
 getenv() { [ -f "$ENV_FILE" ] && grep "^$1=" "$ENV_FILE" | head -1 | cut -d= -f2- || true; }
-randpw() { LC_ALL=C tr -dc 'a-hjkmnp-z2-9' </dev/urandom | head -c 10; }   # no ambiguous chars / no comma
+randpw() { head -c 6 /dev/urandom | od -An -tx1 | tr -d ' \n'; }   # 12 hex chars; no infinite pipe (SIGPIPE-safe under pipefail)
 
 [ -z "${HOST_KEY:-}" ] && HOST_KEY="$(getenv HOST_KEY)"
 HOST_KEY="${HOST_KEY:-$(head -c 5 /dev/urandom | od -An -tx1 | tr -d ' \n')}"
