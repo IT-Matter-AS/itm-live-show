@@ -112,7 +112,12 @@ let listening = false, lastBeats = 0, lastBeatServer = 0;
 let tapMode = false, tapBeat = 0, tapPeriod = 500, tapBpm = 120;
 const tapTimes = [];
 const capEl = document.getElementById('cap');
-capEl.textContent = 'pick a source below to drive the crowd  →  tap tempo is easiest';
+// A self-signed LAN https address (an IP host) is an untrusted origin — browsers
+// block the mic there with no prompt. Say so up front instead of failing silently.
+const untrustedOrigin = location.protocol === 'https:' && /^\d+\.\d+\.\d+\.\d+$/.test(location.hostname);
+capEl.textContent = untrustedOrigin
+  ? 'this self-signed address blocks the mic (no prompt). Use 👆 tap tempo, or open http://localhost:3000/preview, or a real-cert URL'
+  : 'pick a source below to drive the crowd  →  tap tempo is easiest';
 
 const markCap = (id) => ['capTab', 'capTap', 'capMic'].forEach((x) => document.getElementById(x).classList.toggle('on', x === id));
 function ensureCtx() { audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)(); audioCtx.resume?.(); return audioCtx; }
