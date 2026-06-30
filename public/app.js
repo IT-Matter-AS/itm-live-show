@@ -226,17 +226,20 @@ function loop() {
 
   // The reactor follows the music's ACTUAL transients — the robust primary
   // driver that tracks the song on every device (iPhone included). The phase
-  // lock / shared tempo only inform scene motion speed (bpm) and cross-device
-  // coherence; they must never replace the flash, or a weak tempo estimate makes
-  // it strobe at a fixed default instead of following the music.
-  let pulse;
-  if (micState === 'listening') pulse = reactor.pulse;
-  else if (hostBeat) {
+  // lock / shared tempo only inform scene motion speed (bpm), never the flash.
+  // When the room goes quiet (level below the gate) we fade to a calm idle
+  // breathing instead of flashing on noise.
+  const hearingMusic = micState === 'listening' && reactor.level > 0.06;
+  let pulse, level;
+  if (hearingMusic) {
+    pulse = reactor.pulse; level = reactor.level;
+  } else if (hostBeat) {
     const dt = (serverNow() - hostBeat.startAt) / 1000;
     const ph = ((dt % hostBeat.period) + hostBeat.period) % hostBeat.period;
-    pulse = dt >= 0 ? beatEnvelope(ph, hostBeat.period) : 0;
-  } else pulse = 0;
-  const level = micState === 'listening' ? reactor.level : (hostBeat ? 0.45 : idleEnvelope(t));
+    pulse = dt >= 0 ? beatEnvelope(ph, hostBeat.period) : 0; level = 0.45;
+  } else {
+    pulse = 0; level = idleEnvelope(t); // silence / no mic -> gentle breathing
+  }
 
   const { scene, palette } = resolveScene(sceneState, t);
   stage.style.backgroundColor = render(scene, palette, {

@@ -287,10 +287,12 @@ export class AudioReactor {
     // Transient decays between onsets.
     this.pulse *= Math.exp(-dt / 90);
 
-    // Low-band onset against an adaptive floor (rising edge + refractory).
+    // Low-band onset against an adaptive floor (rising edge + refractory). The
+    // `this.level` gate is a noise gate: no beats in near-silence, so when the
+    // music stops the flashing stops too (instead of triggering on room noise).
     this._loAvg += (lo - this._loAvg) * 0.05;
     const rising = lo > this._loPrev;
-    if (lo > this._loAvg * this.sens + 0.02 && rising && nowMs - this.lastBeatMs > this.refractoryMs) {
+    if (this.level > 0.05 && lo > this._loAvg * this.sens + 0.02 && rising && nowMs - this.lastBeatMs > this.refractoryMs) {
       if (this.lastBeatMs > -1e8) {
         const iv = nowMs - this.lastBeatMs;
         if (iv > 250 && iv < 1500) { this._ivs.push(iv); if (this._ivs.length > 8) this._ivs.shift(); }
