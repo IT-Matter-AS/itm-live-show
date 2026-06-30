@@ -280,8 +280,10 @@ function diagText() {
   L.push(`depth  : ${myDepth != null ? (myDepth * 100 | 0) + '% front..back' : '—'}  crowd ${depthInfo?.ok ? 'spread ' + (depthInfo.spread | 0) + 'ms' : 'n/a'}`);
   if (detInfo && detInfo.arrivals && detInfo.arrivals.length) {
     for (const a of detInfo.arrivals) L.push(`  beacon slot ${a.slot}: SNR ${a.snr.toFixed(1)}`);
-  } else {
-    L.push(`  no beacon chirps heard${anchors.length < 3 ? ' (need 3+)' : ''}`);
+  }
+  if (!rf) { // explain why there's no acoustic fix, and what to do
+    if (anchors.length < 3) L.push(`  -> positioning off: open /anchor on ${3 - anchors.length} more device(s)`);
+    else L.push('  -> beacons set up but not heard: raise volume / move closer');
   }
   L.push('(tap to hide)');
   return L.join('\n');
