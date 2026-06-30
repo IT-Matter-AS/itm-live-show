@@ -90,7 +90,7 @@ echo "  ✅ itm-live-show is live   (the first HTTPS certificate can take ~30-60
 echo "     if the link looks insecure for a moment, wait and refresh once)"
 echo
 echo "  THE APP IS PRIVATE — these accounts can sign in (send each person theirs):"
-printf '%s' "$AUTH_USERS" | tr ',' '\n' | while IFS=: read -r email pw; do
+printf '%s\n' "$AUTH_USERS" | tr ',' '\n' | while IFS=: read -r email pw; do
   printf '      %-26s  password: %s\n' "$email" "$pw"
 done
 echo
