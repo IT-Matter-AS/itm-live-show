@@ -37,6 +37,8 @@ let curFeed = 'idle';  // which drive is active (for diagnostics)
 let lastOnsetMs = 0;   // performance.now() of the last detected onset
 // crossfade between looks
 let curScene = null, curPalette = null, curLookKey = null, prevScene = null, prevPalette = null, lookChangeAt = 0, hadPrev = false;
+// photosensitivity safety: slew-limited flash
+let dispPulse = 0, dispDrop = 0, lastFrameMs = 0;
 
 // Positioning + venue.
 let anchors = [], speakers = [], venue = { width: 10, height: 7 }, beaconOffsets = {};
@@ -270,6 +272,16 @@ function loop() {
     pulse = dt >= 0 ? beatEnvelope(ph, hostBeat.period) : 0; level = 0.45; energy = 0.85; curFeed = 'host';
   }
 
+  // Photosensitivity safety: slew-limit the flash so it can't exceed ~3/sec or
+  // hard-cut to white, and cap the drop burst. Default on; director can set 'full'.
+  const nowP = performance.now();
+  const fdt = Math.min(100, nowP - (lastFrameMs || nowP)); lastFrameMs = nowP;
+  const safe = (sceneState?.safety ?? 'safe') === 'safe';
+  const rise = safe ? fdt / 130 : 1;                 // a flash takes >=130ms to rise in safe mode
+  const tgtDrop = safe ? Math.min(drop, 0.35) : drop;
+  dispPulse += pulse > dispPulse ? Math.min(pulse - dispPulse, rise) : pulse - dispPulse;
+  dispDrop += tgtDrop > dispDrop ? Math.min(tgtDrop - dispDrop, rise) : tgtDrop - dispDrop;
+
   const bpmNow = sharedBpm || reactor.bpm || DEMO_BPM;
   const { scene, palette } = resolveScene(sceneState, t, bpmNow);
   // Smooth crossfade when the look changes (musical transitions).
@@ -278,12 +290,12 @@ function loop() {
     prevScene = curScene; prevPalette = curPalette; hadPrev = curLookKey != null;
     lookChangeAt = performance.now(); curScene = scene; curPalette = palette; curLookKey = lookKey;
   }
-  const ctx = { nx: norm.nx, ny: norm.ny, t, pulse, level, bpm: bpmNow, react: sceneState?.react, image: sceneState?.image, energy, drop, bands };
+  const ctx = { nx: norm.nx, ny: norm.ny, t, pulse: dispPulse, level, bpm: bpmNow, react: sceneState?.react, image: sceneState?.image, energy, drop: dispDrop, bands };
   let color = render(curScene, curPalette, ctx);
   const fade = (performance.now() - lookChangeAt) / 700;
   if (hadPrev && fade < 1) color = mix(render(prevScene, prevPalette, ctx), color, fade);
   stage.style.backgroundColor = color;
-  if (glowEl) glowEl.style.opacity = String(Math.min(0.6, pulse * 0.5 + drop * 0.5)); // bloom (bigger on drops)
+  if (glowEl) glowEl.style.opacity = String(Math.min(0.6, dispPulse * 0.5 + dispDrop * 0.5)); // bloom
   if (scene !== lastSceneName) { lastSceneName = scene; showToast(`✨ ${scene}`); }
   if (diagOn && diagEl) diagEl.textContent = diagText();
 

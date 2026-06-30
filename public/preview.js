@@ -13,17 +13,20 @@ const label = document.getElementById('label');
 const cols = 48, rows = 27;
 const clock = new ClockFilter();
 const serverNow = () => Date.now() + clock.offsetAt(Date.now());
-let state = { scene: 'auto', palette: 'auto', react: { brightness: 1, beat: 1, speed: 1 }, image: null, epoch: Date.now() };
+const KEY = new URLSearchParams(location.search).get('key') || ''; // director auth
+let vDispPulse = 0, vDispDrop = 0, vLastFrame = 0;                  // flash-safety slew
+let state = { scene: 'auto', palette: 'auto', react: { brightness: 1, beat: 1, speed: 1 }, image: null, safety: 'safe', epoch: Date.now() };
 
 // --- Realtime (reflect + control) ------------------------------------------
 let ws = null;
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}`);
-  ws.addEventListener('open', () => { ws.send(JSON.stringify({ type: 'host' })); sync(); });
+  ws.addEventListener('open', () => { ws.send(JSON.stringify({ type: 'host', key: KEY })); sync(); });
   ws.addEventListener('message', (e) => {
     let m; try { m = JSON.parse(e.data); } catch { return; }
     if (m.type === 'pong') clock.add(m.t0, m.ts, Date.now());
+    else if (m.type === 'auth' && !m.ok) { capEl.textContent = '⚠ controls locked — open the visualizer from the Host link (with ?key=…)'; }
     else if (m.type === 'scene') { state = { react: { brightness: 1, beat: 1, speed: 1 }, ...m }; syncControls(); }
   });
   ws.addEventListener('close', () => setTimeout(connect, 1500));
@@ -40,7 +43,7 @@ setInterval(() => { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type
 function setLook(patch) {
   state = { ...state, ...patch, epoch: Date.now() };
   if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify({ type: 'scene', scene: state.scene, palette: state.palette, react: state.react, image: state.image, epoch: state.epoch }));
+    ws.send(JSON.stringify({ type: 'scene', scene: state.scene, palette: state.palette, react: state.react, image: state.image, safety: state.safety, epoch: state.epoch }));
   }
   syncControls();
 }
@@ -185,9 +188,14 @@ function sampleMusic() {
 setInterval(() => { if (analyser) sampleMusic(); }, 11); // fast sampling, render-independent
 setInterval(broadcastMusic, 200);                        // heartbeat keeps level fresh
 
+const safeBtn = document.getElementById('safe');
+safeBtn.onclick = () => setLook({ safety: state.safety === 'full' ? 'safe' : 'full' });
+
 function syncControls() {
   for (const s in sceneBtns) sceneBtns[s].classList.toggle('on', s === state.scene);
   for (const p in palBtns) palBtns[p].classList.toggle('on', p === state.palette);
+  safeBtn.textContent = '⚠ flash: ' + (state.safety === 'full' ? 'FULL' : 'safe');
+  safeBtn.classList.toggle('on', state.safety !== 'full');
   const R = state.react || {};
   if (document.activeElement !== rB) rB.value = Math.round((R.brightness ?? 1) * 100);
   if (document.activeElement !== rb) rb.value = Math.round((R.beat ?? 1) * 100);
@@ -243,6 +251,15 @@ function frame() {
   const drop = listening ? reactor.drop : 0;
   const bands = listening ? reactor.bands : null;
 
+  // Photosensitivity safety: slew-limit the flash (default on; toggle to 'full').
+  const nowP = performance.now();
+  const fdt = Math.min(100, nowP - (vLastFrame || nowP)); vLastFrame = nowP;
+  const safeOn = (state.safety ?? 'safe') === 'safe';
+  const rise = safeOn ? fdt / 130 : 1;
+  const tgtDrop = safeOn ? Math.min(drop, 0.35) : drop;
+  vDispPulse += pulse > vDispPulse ? Math.min(pulse - vDispPulse, rise) : pulse - vDispPulse;
+  vDispDrop += tgtDrop > vDispDrop ? Math.min(tgtDrop - vDispDrop, rise) : tgtDrop - vDispDrop;
+
   const W = canvas.width, H = canvas.height;
   g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
   const cw = W / cols, ch = H / rows, rad = Math.min(cw, ch) * 0.36;
@@ -254,7 +271,7 @@ function frame() {
       if (quiet) {
         fill = `hsl(258 45% ${idleB.toFixed(1)}%)`;
       } else {
-        const ctx = { nx, ny, t, pulse, level, bpm: showBpm, react: state.react, image: state.image, energy, drop, bands };
+        const ctx = { nx, ny, t, pulse: vDispPulse, level, bpm: showBpm, react: state.react, image: state.image, energy, drop: vDispDrop, bands };
         fill = render(vCurScene, vCurPalette, ctx);
         if (crossfading) fill = mix(render(vPrevScene, vPrevPalette, ctx), fill, fade);
       }

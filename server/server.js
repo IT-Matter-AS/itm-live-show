@@ -5,6 +5,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { extname, resolve, sep, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
+import { randomBytes } from 'node:crypto';
 import QRCode from 'qrcode';
 import selfsigned from 'selfsigned';
 import { WebSocketServer } from 'ws';
@@ -31,6 +32,9 @@ const PUBLIC_URL = process.env.PUBLIC_URL;
 const HTTP_ONLY = process.env.HTTP_ONLY === '1';
 const TLS_CERT_FILE = process.env.TLS_CERT_FILE;
 const TLS_KEY_FILE = process.env.TLS_KEY_FILE;
+// Director control key: only clients that present it may drive the show / move
+// beacons. Spectators never get it (their QR points to the keyless URL).
+const HOST_KEY = process.env.HOST_KEY || randomBytes(5).toString('hex');
 
 // Positioning venue in metres — phones normalize beacon coordinates by this.
 // Mutable: a setup console can reshape the venue and place PA speakers live.
@@ -111,6 +115,11 @@ async function handler(req, res) {
   }
 
   try {
+    if (urlPath === '/healthz') { // for deploy health checks / monitoring
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, clients: wss.clients.size, spectators: spectators.size, uptimeS: Math.round(process.uptime()) }));
+      return;
+    }
     // Tell the host console which URL to advertise to phones.
     if (urlPath === '/info') {
       res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -186,7 +195,7 @@ if (!HTTP_ONLY) {
 // --- Realtime layer ---------------------------------------------------------
 // The server does almost nothing per-phone: it answers clock-sync pings and
 // relays small coordination messages. No light frames are ever streamed.
-const wss = new WebSocketServer({ noServer: true });
+const wss = new WebSocketServer({ noServer: true, maxPayload: 262144 }); // 256 KB cap
 for (const { server } of listeners) {
   server.on('upgrade', (req, socket, head) => {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
@@ -195,7 +204,7 @@ for (const { server } of listeners) {
 
 const spectators = new Set();   // phones that have joined (for the live head count)
 let currentShow = null;         // { type:'show', name, startAt, bpm } in server-clock ms
-let currentScene = { type: 'scene', scene: 'auto', palette: 'auto', epoch: Date.now() };
+let currentScene = { type: 'scene', scene: 'auto', palette: 'auto', epoch: Date.now(), safety: 'safe' };
 const anchors = new Map(); // ws -> { slot, x, y } (a slot may be reused far apart)
 
 function broadcast(obj) {
@@ -209,8 +218,13 @@ const broadcastAnchors = () => broadcast(anchorsMsg());
 
 wss.on('connection', (ws) => {
   ws.on('message', (raw) => {
+    const now = Date.now();                       // simple per-connection rate limit
+    if (now - (ws._win || 0) > 1000) { ws._win = now; ws._n = 0; }
+    if (++ws._n > 150) return;
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
+    // Mutating/control messages require director authorization (see 'host').
+    if (!ws.isDirector && ['anchor', 'scene', 'start', 'stop', 'music', 'calib', 'config'].includes(msg.type)) return;
     switch (msg.type) {
       case 'ping': // NTP-style clock sync: echo client stamp, add server time.
         ws.send(JSON.stringify({ type: 'pong', t0: msg.t0, ts: Date.now() }));
@@ -222,7 +236,9 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify(anchorsMsg()));
         broadcastCount();
         break;
-      case 'host': // The console / visualizer / setup — head count, look, venue.
+      case 'host': // Console / visualizer / setup — authorize as director, send state.
+        if (msg.key && msg.key === HOST_KEY) ws.isDirector = true;
+        ws.send(JSON.stringify({ type: 'auth', ok: !!ws.isDirector }));
         ws.send(JSON.stringify({ type: 'count', n: spectators.size }));
         ws.send(JSON.stringify(currentScene));
         ws.send(JSON.stringify(anchorsMsg())); // so /setup shows the saved venue + speakers
@@ -257,6 +273,7 @@ wss.on('connection', (ws) => {
           palette: msg.palette ?? currentScene.palette,    // name | 'auto' | {stops}
           react: msg.react ?? currentScene.react,          // { brightness, beat, speed }
           image: 'image' in msg ? msg.image : currentScene.image, // crowd-as-screen grid
+          safety: msg.safety ?? currentScene.safety,       // 'safe' | 'full' (flash limiting)
           epoch: msg.epoch || Date.now(),
         };
         broadcast(currentScene);
@@ -325,8 +342,10 @@ setInterval(() => {
 
 httpServer.listen(HTTP_PORT, () => {
   console.log('itm-live-show running:');
-  console.log(`  Host console (this machine): http://localhost:${HTTP_PORT}/host`);
-  console.log(`  Phones should open:          ${joinURL()}`);
+  console.log(`  Host console (DIRECTOR — keep private): http://localhost:${HTTP_PORT}/host?key=${HOST_KEY}`);
+  console.log(`  Phones should open (no key):            ${joinURL()}`);
+  if (process.env.HOST_KEY) console.log('  Director key from HOST_KEY env.');
+  else console.log('  Director key is random this run; set HOST_KEY env to keep it stable.');
   if (HTTP_ONLY) console.log('  Mode: HTTP_ONLY (a managed proxy/CDN terminates TLS).');
 });
 if (httpsServer) {

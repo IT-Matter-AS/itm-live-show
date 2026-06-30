@@ -19,10 +19,11 @@ let ws = null;
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}`);
-  ws.addEventListener('open', () => syncClock());
+  ws.addEventListener('open', () => { ws.send(JSON.stringify({ type: 'host', key: qs.get('key') || '' })); syncClock(); });
   ws.addEventListener('message', (e) => {
     let m; try { m = JSON.parse(e.data); } catch { return; }
-    if (m.type === 'pong') { const t1 = Date.now(), r = t1 - m.t0; if (r < bestRtt) { bestRtt = r; offset = m.ts - (m.t0 + t1) / 2; } }
+    if (m.type === 'auth' && !m.ok) { statusEl.textContent = '⚠ locked — open this beacon from the Host link (with ?key=)'; }
+    else if (m.type === 'pong') { const t1 = Date.now(), r = t1 - m.t0; if (r < bestRtt) { bestRtt = r; offset = m.ts - (m.t0 + t1) / 2; } }
     else if (m.type === 'anchor-ok') { slot = m.slot; slotEl.textContent = `slot ${slot}`; statusEl.textContent = `emitting · slot ${slot} · ±${(bestRtt / 2) | 0}ms`; statusEl.className = 'live'; }
     else if (m.type === 'anchor-full') { statusEl.textContent = 'no free slot (max beacons reached)'; }
   });

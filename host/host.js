@@ -2,6 +2,11 @@ import { DEMO_BPM } from '/show.js';
 
 const $ = (id) => document.getElementById(id);
 const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+const KEY = new URLSearchParams(location.search).get('key') || '';
+// Carry the director key onto the visualizer/setup/beacon links so they stay authorized.
+if (KEY) for (const a of document.querySelectorAll('a[href^="/"]')) {
+  try { const u = new URL(a.href); u.searchParams.set('key', KEY); a.href = u.toString(); } catch {}
+}
 
 let offset = 0;                 // serverTime ≈ Date.now() + offset
 let bestRtt = Infinity;
@@ -21,12 +26,17 @@ const serverNow = () => Date.now() + offset;
 // --- WebSocket: clock sync, head count, show triggers ----------------------
 const ws = new WebSocket(`${wsProto}://${location.host}`);
 ws.addEventListener('open', () => {
-  ws.send(JSON.stringify({ type: 'host' }));
+  ws.send(JSON.stringify({ type: 'host', key: KEY }));
   syncClock();
 });
 ws.addEventListener('message', (e) => {
   const msg = JSON.parse(e.data);
-  if (msg.type === 'pong') {
+  if (msg.type === 'auth' && !msg.ok) {
+    const n = document.createElement('div');
+    n.textContent = '⚠ Not authorized to control — open this page via the Host link the server printed (it has ?key=…).';
+    n.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff5c5c;color:#400;font:600 13px system-ui;padding:8px;text-align:center;z-index:9';
+    document.body.prepend(n);
+  } else if (msg.type === 'pong') {
     const t1 = Date.now(), rtt = t1 - msg.t0;
     if (rtt < bestRtt) { bestRtt = rtt; offset = msg.ts - (msg.t0 + t1) / 2; }
   } else if (msg.type === 'count') {

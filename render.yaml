@@ -13,3 +13,5 @@ services:
         value: "1"
       - key: PUBLIC_URL
         sync: false
+      - key: HOST_KEY
+        generateValue: true   # stable director key (only the organizer can control the show)

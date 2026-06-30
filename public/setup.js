@@ -15,10 +15,11 @@ let ws = null;
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}`);
-  ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'host' })));
+  ws.addEventListener('open', () => ws.send(JSON.stringify({ type: 'host', key: new URLSearchParams(location.search).get('key') || '' })));
   ws.addEventListener('message', (e) => {
     let m; try { m = JSON.parse(e.data); } catch { return; }
-    if (m.type === 'anchors') {
+    if (m.type === 'auth' && !m.ok) { document.getElementById('saved').textContent = '⚠ locked — open from the Host link (with ?key=)'; }
+    else if (m.type === 'anchors') {
       beacons = m.list || [];
       if (m.venue) { venue = m.venue; wIn.value = venue.width; hIn.value = venue.height; }
       if (m.speakers && m.speakers.length && !speakers.length) speakers = m.speakers.slice();
