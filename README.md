@@ -56,6 +56,9 @@ managed TLS — no warning, and phones don't need the venue Wi-Fi. The server ad
 | `PUBLIC_URL=https://your.domain` | QR points here; no warning; cellular-friendly |
 | `HTTP_ONLY=1` | serve plain HTTP only (a proxy/CDN terminates TLS) |
 | `TLS_CERT_FILE` + `TLS_KEY_FILE` | use a real cert (e.g. Let's Encrypt) |
+| `AUTH_USERS="email:pw,…"` | require sign-in; locks the app to these accounts |
+| `OPEN_CROWD=1` | with `AUTH_USERS` set, let the crowd join without a login |
+| `HOST_KEY=…` | director key for `?key=` control when login is off |
 | `VENUE_W` / `VENUE_H` | default venue size in metres |
 | *(none)* | self-signed cert — **LAN dev only**, one-time warning |
 
@@ -103,9 +106,11 @@ In deploy modes the app serves plain HTTP behind the platform's TLS edge
 - **Stadium scale:** TDMA beacon slots are **reused** across far-apart zones
   (cellular-style); a phone hears its nearest cluster and disambiguates by fit.
 
-The DSP/sync core is covered by a headless test suite (`npm test`): matched-filter
-ranging, TDOA positioning, slot-reuse, beat detection, clock filter, phase lock,
-motion filter, and beacon calibration.
+Two headless suites run on `npm test`. The DSP/sync core: matched-filter ranging,
+TDOA positioning, slot-reuse, beat detection, tempo-confidence (predict vs react),
+silence/presence gating across a long loud song, clock filter, phase lock, motion
+filter, and beacon calibration. The login layer: credential verification,
+sessions, cookie parsing, and open-redirect defense.
 
 ## Layout
 
@@ -116,11 +121,14 @@ motion filter, and beacon calibration.
 - [public/setup.js](public/setup.js) — venue + speaker setup map.
 - [public/anchor.js](public/anchor.js) — ultrasonic beacon emitter.
 - [server/server.js](server/server.js) — static serving, clock sync, relays, deploy modes.
+- [server/auth.js](server/auth.js) — optional seeded-user login: sessions, cookies, gate.
+- [deploy/](deploy/) — one-command Hetzner deploy (Caddy auto-HTTPS + compose); see [deploy/DEPLOY.md](deploy/DEPLOY.md).
 
 ## Status
 
 Music-reactive sync, coordinated scenes + crowd-images, reconnecting realtime,
-deployment-ready TLS, and the full positioning stack (beacons, calibration,
-slot-reuse) are implemented; the DSP/sync core is verified headless. The acoustic
-positioning path needs real-hardware tuning (≥3 beacon devices) — until then,
-positions fall back to simulated and the music-sync show works on its own.
+seeded-user login, real managed TLS, a one-command Hetzner deploy, and the full
+positioning stack (beacons, calibration, slot-reuse) are implemented; both test
+suites pass headless. The acoustic positioning path needs real-hardware tuning
+(≥3 beacon devices) — until then, positions fall back to simulated and the
+music-sync show works on its own.
