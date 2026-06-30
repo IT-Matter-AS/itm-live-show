@@ -1,0 +1,7 @@
+node_modules
+.cert
+.venue.json
+.git
+.claude
+*.log
+test

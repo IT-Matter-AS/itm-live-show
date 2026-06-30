@@ -59,6 +59,21 @@ managed TLS — no warning, and phones don't need the venue Wi-Fi. The server ad
 | `VENUE_W` / `VENUE_H` | default venue size in metres |
 | *(none)* | self-signed cert — **LAN dev only**, one-time warning |
 
+### One-command deploy (real HTTPS, cellular)
+
+The repo ships a `Dockerfile` (HTTP-only, for a host that terminates TLS at its
+edge) and a Render blueprint. Any container host works — e.g.:
+
+```sh
+# Fly.io
+fly launch --dockerfile Dockerfile        # then: fly deploy
+fly secrets set PUBLIC_URL=https://<your-app>.fly.dev   # point the QR at it
+```
+
+Or on Render: New → Blueprint → pick this repo (uses `render.yaml`), then set
+`PUBLIC_URL` to the assigned `https://…onrender.com` and redeploy. Now phones
+join over cellular with **no Wi-Fi and no cert warning**.
+
 ## Synchronization & accuracy
 
 - **Clock:** skew-corrected regression over low-jitter samples (~sub-ms), not a

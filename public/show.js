@@ -91,6 +91,23 @@ const SCENE_FNS = {
     const [h, s, l] = samplePalette(c.palette, (c.t * 0.05 * c.speed) % 1);
     return [h, s, 12 + l * 0.2 + c.level * 38 + c.pulse * 45];
   },
+  // A luminous wave rolling front-to-back through the crowd (along the depth
+  // axis), on tempo. Pairs with shared-audio depth — no beacons needed.
+  tide(c) {
+    const b = beatsAt(c.t, c.bpm, c.speed);
+    const sweep = (b * 0.2) % 1;
+    const band = Math.max(0, 1 - Math.abs(c.ny - sweep) * 3.5);
+    const [h, s] = samplePalette(c.palette, c.ny);
+    return [h, s, 8 + band * 78 + c.pulse * 14];
+  },
+  // Depth bands (front / mid / back) that recolor on the beat.
+  depthrows(c) {
+    const N = 5;
+    const idx = Math.min(N - 1, Math.floor(c.ny * N));
+    const beat = Math.floor(beatsAt(c.t, c.bpm, c.speed));
+    const [h, s, l] = samplePalette(c.palette, ((idx + beat) % N) / N);
+    return [h, s, 16 + l * 0.25 + c.level * 24 + c.pulse * 38];
+  },
   // Crowd-as-screen: each phone lights the cell of a low-res image at its
   // position, so the whole crowd spells text / shows a logo. Needs real
   // positions to read on a live crowd; perfect in /preview today.
@@ -106,7 +123,7 @@ const SCENE_FNS = {
 };
 
 // Scenes the auto-director cycles through (image is excluded — it needs content).
-export const SCENES = ['aurora', 'gradient', 'wave', 'strobe', 'ripple', 'sections', 'twinkle', 'pulse'];
+export const SCENES = ['aurora', 'gradient', 'wave', 'tide', 'strobe', 'ripple', 'sections', 'depthrows', 'twinkle', 'pulse'];
 export const ALL_SCENES = [...SCENES, 'image']; // everything selectable in the console
 
 export function render(scene, palette, ctx) {

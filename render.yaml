@@ -1,0 +1,15 @@
+# One-click deploy on Render (https://render.com) — gives a real HTTPS URL so
+# phones can join over cellular with no cert warning. After the first deploy,
+# set PUBLIC_URL to the assigned https URL (e.g. https://itm-live-show.onrender.com)
+# so the QR code points to it, then redeploy.
+services:
+  - type: web
+    name: itm-live-show
+    runtime: docker
+    plan: free
+    healthCheckPath: /info
+    envVars:
+      - key: HTTP_ONLY
+        value: "1"
+      - key: PUBLIC_URL
+        sync: false
