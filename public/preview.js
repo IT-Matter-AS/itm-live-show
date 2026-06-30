@@ -1,4 +1,4 @@
-import { render, resolveScene, beatEnvelope, ALL_SCENES, PALETTE_NAMES } from '/show.js';
+import { render, resolveScene, beatEnvelope, mix, ALL_SCENES, PALETTE_NAMES } from '/show.js';
 import { AudioReactor, ClockFilter, DETECT_LATENCY_MS } from '/dsp.js';
 
 // A grid of virtual phones running the EXACT scene code real phones run — the
@@ -112,6 +112,8 @@ let audioCtx = null, analyser = null, byteTime = null, freqData = null;
 let listening = false, lastBeats = 0, lastBeatServer = 0;
 let tapMode = false, tapBeat = 0, tapPeriod = 500, tapBpm = 120;
 const tapTimes = [];
+// crossfade between looks
+let vCurScene = null, vCurPalette = null, vCurKey = null, vPrevScene = null, vPrevPalette = null, vChangeAt = 0, vHadPrev = false;
 const capEl = document.getElementById('cap');
 // A self-signed LAN https address (an IP host) is an untrusted origin — browsers
 // block the mic there with no prompt. Say so up front instead of failing silently.
@@ -163,8 +165,8 @@ document.getElementById('capTap').onclick = () => {
 // Broadcast the current beat feed to every phone (from capture or taps).
 function broadcastMusic() {
   if (!ws || ws.readyState !== 1) return;
-  if (listening) ws.send(JSON.stringify({ type: 'music', beatAt: lastBeatServer, period: 60000 / (reactor.bpm || 120), level: reactor.level, bpm: reactor.bpm || 0 }));
-  else if (tapMode) ws.send(JSON.stringify({ type: 'music', beatAt: tapBeat, period: tapPeriod, level: 0.7, bpm: tapBpm }));
+  if (listening) ws.send(JSON.stringify({ type: 'music', beatAt: lastBeatServer, period: 60000 / (reactor.bpm || 120), level: reactor.level, bpm: reactor.bpm || 0, energy: reactor.energy, drop: reactor.drop, bands: reactor.bands }));
+  else if (tapMode) ws.send(JSON.stringify({ type: 'music', beatAt: tapBeat, period: tapPeriod, level: 0.7, bpm: tapBpm, energy: 0.9, drop: 0 }));
 }
 
 function sampleMusic() {
@@ -225,9 +227,21 @@ function frame() {
     // don't touch capEl here — it carries the idle prompt or an error message
   }
 
-  const { scene, palette } = resolveScene(state, t);
-  label.textContent = quiet ? 'idle · quiet' : `${scene} · ${typeof palette === 'string' ? palette : 'custom'}`;
   const showBpm = (listening && reactor.bpm) || (tapMode && tapBpm) || 120;
+  const { scene, palette } = resolveScene(state, t, showBpm);
+  label.textContent = quiet ? 'idle · quiet' : `${scene} · ${typeof palette === 'string' ? palette : 'custom'}`;
+
+  // Crossfade tracking (smooth scene transitions).
+  const lookKey = scene + '|' + (typeof palette === 'string' ? palette : 'custom');
+  if (lookKey !== vCurKey) {
+    vPrevScene = vCurScene; vPrevPalette = vCurPalette; vHadPrev = vCurKey != null;
+    vChangeAt = performance.now(); vCurScene = scene; vCurPalette = palette; vCurKey = lookKey;
+  }
+  const fade = (performance.now() - vChangeAt) / 700;
+  const crossfading = vHadPrev && fade < 1 && !quiet;
+  const energy = listening ? reactor.energy : 0.85;
+  const drop = listening ? reactor.drop : 0;
+  const bands = listening ? reactor.bands : null;
 
   const W = canvas.width, H = canvas.height;
   g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
@@ -236,9 +250,15 @@ function frame() {
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const nx = (c + 0.5) / cols, ny = (r + 0.5) / rows;
-      g.fillStyle = quiet
-        ? `hsl(258 45% ${idleB.toFixed(1)}%)`
-        : render(scene, palette, { nx, ny, t, pulse, level, bpm: showBpm, react: state.react, image: state.image });
+      let fill;
+      if (quiet) {
+        fill = `hsl(258 45% ${idleB.toFixed(1)}%)`;
+      } else {
+        const ctx = { nx, ny, t, pulse, level, bpm: showBpm, react: state.react, image: state.image, energy, drop, bands };
+        fill = render(vCurScene, vCurPalette, ctx);
+        if (crossfading) fill = mix(render(vPrevScene, vPrevPalette, ctx), fill, fade);
+      }
+      g.fillStyle = fill;
       g.beginPath();
       g.arc(c * cw + cw / 2, r * ch + ch / 2, rad, 0, 6.2832);
       g.fill();

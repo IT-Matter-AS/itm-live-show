@@ -37,6 +37,20 @@ function samplePalette(palette, p) {
 }
 const css = (h, s, l) => `hsl(${h.toFixed(0)} ${Math.max(0, Math.min(100, s)).toFixed(0)}% ${Math.max(3, Math.min(98, l)).toFixed(0)}%)`;
 
+// Blend two hsl() strings in RGB (for smooth scene crossfades). f: 0=a .. 1=b.
+function hslToRgb(h, s, l) {
+  s /= 100; l /= 100;
+  const k = (n) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+  return [255 * f(0), 255 * f(8), 255 * f(4)];
+}
+function parseHsl(str) { const m = /hsl\((-?\d+) (\d+)% (\d+)%\)/.exec(str); return m ? [+m[1], +m[2], +m[3]] : [0, 0, 0]; }
+export function mix(a, b, f) {
+  const A = hslToRgb(...parseHsl(a)), B = hslToRgb(...parseHsl(b)), L = (x, y) => Math.round(x + (y - x) * f);
+  return `rgb(${L(A[0], B[0])} ${L(A[1], B[1])} ${L(A[2], B[2])})`;
+}
+
 function hash01(nx, ny) {
   const s = Math.sin(nx * 127.1 + ny * 311.7) * 43758.5453;
   return s - Math.floor(s);
@@ -108,6 +122,13 @@ const SCENE_FNS = {
     const [h, s, l] = samplePalette(c.palette, ((idx + beat) % N) / N);
     return [h, s, 16 + l * 0.25 + c.level * 24 + c.pulse * 38];
   },
+  // Spectrum: the crowd's color mirrors the sound — bass → red, treble → blue,
+  // brightness rides the loudness, flash on the beat.
+  spectrum(c) {
+    const b = c.bands || { mid: 0.33, treble: 0.33 };
+    const hue = (b.mid * 120 + b.treble * 235 + c.nx * 15) % 360;
+    return [hue, 92, 10 + c.level * 35 + c.pulse * 45];
+  },
   // Crowd-as-screen: each phone lights the cell of a low-res image at its
   // position, so the whole crowd spells text / shows a logo. Needs real
   // positions to read on a live crowd; perfect in /preview today.
@@ -123,33 +144,41 @@ const SCENE_FNS = {
 };
 
 // Scenes the auto-director cycles through (image is excluded — it needs content).
-export const SCENES = ['aurora', 'gradient', 'wave', 'tide', 'strobe', 'ripple', 'sections', 'depthrows', 'twinkle', 'pulse'];
+export const SCENES = ['aurora', 'gradient', 'wave', 'tide', 'spectrum', 'strobe', 'ripple', 'sections', 'depthrows', 'twinkle', 'pulse'];
 export const ALL_SCENES = [...SCENES, 'image']; // everything selectable in the console
 
 export function render(scene, palette, ctx) {
   const fn = SCENE_FNS[scene] || SCENE_FNS.pulse;
   const R = ctx.react || {};
-  ctx.palette = palette ?? 'sunset';
-  ctx.speed = R.speed ?? 1;
-  ctx.pulse = Math.min(1.5, (ctx.pulse || 0) * (R.beat ?? 1)); // beat-punch knob
-  let [h, s, l] = fn(ctx);
+  // Build a local frame so render() is pure — safe to call twice (for crossfades).
+  const c = {
+    nx: ctx.nx, ny: ctx.ny, t: ctx.t, level: ctx.level || 0, bands: ctx.bands, image: ctx.image,
+    bpm: ctx.bpm, palette: palette ?? 'sunset', speed: R.speed ?? 1,
+    pulse: Math.min(1.5, (ctx.pulse || 0) * (R.beat ?? 1)), // beat-punch knob
+  };
+  let [h, s, l] = fn(c);
   l *= R.brightness ?? 1;                                       // brightness knob
+  // Dynamics: swell with the song's energy, and a synchronized white burst on a drop.
+  const E = ctx.energy ?? 1, D = ctx.drop ?? 0;
+  l = l * (0.45 + 0.55 * E) + D * 55;
+  s = s * (1 - D * 0.85);
   return css(h, s, l);
 }
 
 // Director: directive + shared clock -> the active scene/palette. 'auto' values
 // cycle on the clock so every phone agrees with no per-frame messaging.
-const SCENE_SECS = 18, PALETTE_SECS = 30;
-export function resolveScene(state, tSec) {
+const PHRASE_BARS = 8; // auto scenes change on a musical phrase, not a fixed timer
+export function resolveScene(state, tSec, bpm) {
   if (!state) return { scene: 'aurora', palette: 'sunset' };
   const e = (state.epoch || 0) / 1000;
   const elapsed = Math.max(0, tSec - e);
+  const phrase = PHRASE_BARS * 4 * (60 / (bpm || DEMO_BPM)); // seconds per phrase (tempo-relative)
   const scene = state.scene && state.scene !== 'auto'
     ? state.scene
-    : SCENES[Math.floor(elapsed / SCENE_SECS) % SCENES.length];
+    : SCENES[Math.floor(elapsed / phrase) % SCENES.length];
   const palette = state.palette && state.palette !== 'auto'
     ? state.palette
-    : PALETTE_NAMES[Math.floor(elapsed / PALETTE_SECS) % PALETTE_NAMES.length];
+    : PALETTE_NAMES[Math.floor(elapsed / (phrase * 2)) % PALETTE_NAMES.length];
   return { scene, palette };
 }
 

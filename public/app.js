@@ -1,5 +1,5 @@
 import { Localizer } from '/localizer.js';
-import { render, resolveScene, beatEnvelope, idleEnvelope, DEMO_BPM } from '/show.js';
+import { render, resolveScene, beatEnvelope, idleEnvelope, mix, DEMO_BPM } from '/show.js';
 import { AudioReactor, AUDIO, DETECT_LATENCY_MS, makeChirpTemplate, locateFromFrame, calibrateOffsets, ClockFilter, PhaseLock, OneEuro, foldPhase, circMean, depthOf } from '/dsp.js';
 
 const stage = document.getElementById('stage');
@@ -35,6 +35,8 @@ let sceneState = null; // director directive
 let musicFeed = null;  // { beatAt, period, level, at } — live capture from the visualizer
 let curFeed = 'idle';  // which drive is active (for diagnostics)
 let lastOnsetMs = 0;   // performance.now() of the last detected onset
+// crossfade between looks
+let curScene = null, curPalette = null, curLookKey = null, prevScene = null, prevPalette = null, lookChangeAt = 0, hadPrev = false;
 
 // Positioning + venue.
 let anchors = [], speakers = [], venue = { width: 10, height: 7 }, beaconOffsets = {};
@@ -82,7 +84,7 @@ function onMessage(e) {
     if (m.speakers) speakers = m.speakers;
     if (m.offsets) beaconOffsets = m.offsets;
   } else if (m.type === 'depth') depthInfo = m;
-  else if (m.type === 'music') musicFeed = { beatAt: m.beatAt, period: m.period, level: m.level, at: Date.now() };
+  else if (m.type === 'music') musicFeed = { beatAt: m.beatAt, period: m.period, level: m.level, energy: m.energy, drop: m.drop, bands: m.bands, at: Date.now() };
 }
 function ping() { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'ping', t0: Date.now() })); }
 function burstPing(n = 12) { let i = 0; const tick = () => { if (i++ >= n) return; ping(); setTimeout(tick, 120); }; tick(); }
@@ -251,27 +253,37 @@ function loop() {
   // Drive: central capture (predictive, unison) > own mic (predictive when a
   // confident tempo lock exists — anticipates the beat with no detection lag —
   // else reactive) > host demo beat.
-  let pulse, level;
+  let pulse, level, energy = 1, drop = 0, bands = null;
   if (musicFresh) {
     const ph = ((serverNow() - musicFeed.beatAt) % musicFeed.period + musicFeed.period) % musicFeed.period;
-    pulse = beatEnvelope(ph / 1000, musicFeed.period / 1000); level = musicFeed.level; curFeed = 'central';
+    pulse = beatEnvelope(ph / 1000, musicFeed.period / 1000); level = musicFeed.level;
+    energy = musicFeed.energy ?? 1; drop = musicFeed.drop ?? 0; bands = musicFeed.bands; curFeed = 'central';
   } else if (hearingMusic) {
     const sb = phase.sinceBeat(t);
     const locked = reactor.bpm && performance.now() - lastOnsetMs < 1500 && sb != null;
     pulse = locked ? beatEnvelope(sb, phase.period) : reactor.pulse;
-    level = reactor.level; curFeed = locked ? 'mic·lock' : 'mic';
+    level = reactor.level; energy = reactor.energy; drop = reactor.drop; bands = reactor.bands;
+    curFeed = locked ? 'mic·lock' : 'mic';
   } else {
     const dt = (serverNow() - hostBeat.startAt) / 1000;
     const ph = ((dt % hostBeat.period) + hostBeat.period) % hostBeat.period;
-    pulse = dt >= 0 ? beatEnvelope(ph, hostBeat.period) : 0; level = 0.45; curFeed = 'host';
+    pulse = dt >= 0 ? beatEnvelope(ph, hostBeat.period) : 0; level = 0.45; energy = 0.85; curFeed = 'host';
   }
 
-  const { scene, palette } = resolveScene(sceneState, t);
-  stage.style.backgroundColor = render(scene, palette, {
-    nx: norm.nx, ny: norm.ny, t, pulse, level,
-    bpm: sharedBpm || reactor.bpm || DEMO_BPM, react: sceneState?.react, image: sceneState?.image,
-  });
-  if (glowEl) glowEl.style.opacity = String(Math.min(0.55, pulse * 0.5)); // beat bloom
+  const bpmNow = sharedBpm || reactor.bpm || DEMO_BPM;
+  const { scene, palette } = resolveScene(sceneState, t, bpmNow);
+  // Smooth crossfade when the look changes (musical transitions).
+  const lookKey = scene + '|' + (typeof palette === 'string' ? palette : 'custom');
+  if (lookKey !== curLookKey) {
+    prevScene = curScene; prevPalette = curPalette; hadPrev = curLookKey != null;
+    lookChangeAt = performance.now(); curScene = scene; curPalette = palette; curLookKey = lookKey;
+  }
+  const ctx = { nx: norm.nx, ny: norm.ny, t, pulse, level, bpm: bpmNow, react: sceneState?.react, image: sceneState?.image, energy, drop, bands };
+  let color = render(curScene, curPalette, ctx);
+  const fade = (performance.now() - lookChangeAt) / 700;
+  if (hadPrev && fade < 1) color = mix(render(prevScene, prevPalette, ctx), color, fade);
+  stage.style.backgroundColor = color;
+  if (glowEl) glowEl.style.opacity = String(Math.min(0.6, pulse * 0.5 + drop * 0.5)); // bloom (bigger on drops)
   if (scene !== lastSceneName) { lastSceneName = scene; showToast(`✨ ${scene}`); }
   if (diagOn && diagEl) diagEl.textContent = diagText();
 
@@ -296,6 +308,7 @@ function diagText() {
   const L = [];
   L.push(`mic    : ${micState}${micState === 'listening' ? ' (' + (audioCtx?.state || '?') + ')' : ''}${micError ? ' [' + micError + ']' : ''}`);
   L.push(`audio  : level ${(reactor.level * 100) | 0}%  pulse ${(reactor.pulse * 100) | 0}%`);
+  L.push(`feel   : energy ${(reactor.energy * 100) | 0}%  drop ${(reactor.drop * 100) | 0}%  b/m/t ${(reactor.bands.bass * 100) | 0}/${(reactor.bands.mid * 100) | 0}/${(reactor.bands.treble * 100) | 0}`);
   L.push(`drive  : ${curFeed}${curFeed === 'central' ? ' (visualizer feed)' : ''}`);
   L.push(`tempo  : local ${reactor.bpm || '-'}  shared ${sharedBpm || '-'} bpm`);
   L.push(`clock  : ±${Number.isFinite(q) ? (q | 0) : '?'} ms`);

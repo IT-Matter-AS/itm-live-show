@@ -268,7 +268,10 @@ export class AudioReactor {
   constructor(opts = {}) {
     this.level = 0;          // 0..1 smoothed loudness
     this.pulse = 0;          // 0..1 transient, decays between onsets
-    this.flux = 0;           // latest spectral-flux value (diagnostics)
+    this.flux = 0;           // latest spectral-flux value
+    this.energy = 0;         // 0..1 slow energy envelope (verse vs chorus)
+    this.drop = 0;           // 0..1 decaying burst after a detected drop
+    this.bands = { bass: 0, mid: 0, treble: 0 };
     this.beats = 0;
     this.bpm = null;
     this.lastBeatMs = -1e9;
@@ -276,13 +279,16 @@ export class AudioReactor {
     this.refractoryMs = opts.refractoryMs ?? 140;
     this.peakDecay = opts.peakDecay ?? 0.997; // auto-gain peak-follower decay
     this._peak = 0.08;
-    this.bandFrac = opts.bandFrac ?? 0.22;   // flux over the bottom ~22% of bins (<~5kHz)
+    this.bandFrac = opts.bandFrac ?? 0.22;   // analysis band: bottom ~22% of bins (<~5kHz)
     this.fluxFloor = opts.fluxFloor ?? 0.004;
     this._lastT = null;
     this._prev = null;       // previous magnitude spectrum
     this._fluxAvg = 0;
     this._fluxPrev = 0;
-    this._ivs = [];
+    // dynamics / drop
+    this._eShort = 0; this._eLong = 0; this._lastDrop = -1e9;
+    // tempogram: flux history + per-sample timestamps (rate derived from those)
+    this._fh = []; this._fht = []; this._fluxWin = 0; this._lastPush = 0; this._lastAc = 0;
   }
 
   // rms: broadband loudness (~0..1). freq: magnitude spectrum (Uint8Array 0..255,
@@ -291,54 +297,80 @@ export class AudioReactor {
     const dt = this._lastT == null ? 16 : Math.min(100, nowMs - this._lastT);
     this._lastT = nowMs;
 
-    // Loudness with auto-gain: a slow-decaying peak follower normalizes ANY input
-    // volume (mic, line-in, tab audio) into 0..1, then heavy smoothing makes a
-    // calm "energy" glow — no more jumpy meter. The sharp beat flash is `pulse`,
-    // kept separate so the glow stays smooth while beats still pop.
+    // Loudness with auto-gain -> calm 0..1 glow (the sharp flash is `pulse`).
     this._peak = Math.max(rms, this._peak * this.peakDecay);
     const norm = this._peak > 1e-3 ? Math.min(1, rms / this._peak) : 0;
     this.level += (norm - this.level) * 0.1;
     this.pulse *= Math.exp(-dt / 90);
 
-    // Spectral flux: sum of positive bin-to-bin increases across the musical band
-    // (half-wave rectified, so decays don't count). Far more musical than bass
-    // energy alone — it fires on drums, stabs, vocal hits. We stop the band well
-    // below 17 kHz so the ultrasonic positioning chirps never register as beats.
-    const hi = Math.max(4, Math.floor(freq.length * this.bandFrac));
+    // Frequency bands (bass / mid / treble), each auto-gained to 0..1, so color
+    // can mirror the actual sound. Bands stop well below the ultrasonic beacons.
+    const N = freq.length;
+    const band = (a, b) => { let s = 0; for (let k = a; k < b; k++) s += freq[k]; return s / ((b - a) * 255 || 1); };
+    const bassN = Math.max(2, Math.floor(N * 0.016)), midN = Math.floor(N * 0.08), treN = Math.floor(N * 0.22);
+    const rb = band(1, bassN), rm = band(bassN, midN), rt = band(midN, treN), tot = rb + rm + rt + 1e-6;
+    this.bands.bass += (rb / tot - this.bands.bass) * 0.35;   // relative spectral balance
+    this.bands.mid += (rm / tot - this.bands.mid) * 0.35;     // (proportions, sum ~1) -> drives hue
+    this.bands.treble += (rt / tot - this.bands.treble) * 0.35;
+
+    // Spectral flux: positive bin-to-bin increases across the band — a musical
+    // onset cue (drums, stabs, vocals), not just bass energy.
+    const hi = Math.max(4, treN);
     let flux = 0;
-    if (this._prev && this._prev.length === freq.length) {
+    if (this._prev && this._prev.length === N) {
       for (let k = 1; k < hi; k++) { const d = freq[k] - this._prev[k]; if (d > 0) flux += d; }
     }
     flux /= hi * 255;
-    if (!this._prev || this._prev.length !== freq.length) this._prev = new Uint8Array(freq.length);
+    if (!this._prev || this._prev.length !== N) this._prev = new Uint8Array(N);
     this._prev.set(freq);
     this.flux = flux;
 
-    // Onset = a rising flux peak above an adaptive floor; level-gated so silence
-    // (or just room noise) never triggers a beat.
+    // Onset = rising flux peak above an adaptive floor; level-gated for silence.
     this._fluxAvg += (flux - this._fluxAvg) * 0.05;
-    const rising = flux > this._fluxPrev;
-    if (this.level > 0.05 && flux > this._fluxAvg * this.sens + this.fluxFloor && rising && nowMs - this.lastBeatMs > this.refractoryMs) {
-      if (this.lastBeatMs > -1e8) {
-        const iv = nowMs - this.lastBeatMs;
-        if (iv > 250 && iv < 1500) { this._ivs.push(iv); if (this._ivs.length > 8) this._ivs.shift(); }
-      }
-      this.lastBeatMs = nowMs;
-      this.beats++;
-      this.pulse = 1;
-      if (this._ivs.length >= 3) {
-        const s = [...this._ivs].sort((a, b) => a - b);
-        let v = 60000 / s[s.length >> 1];
-        while (v < 60) v *= 2; while (v > 180) v /= 2; // mild octave fold -> stay on the beat
-        this.bpm = Math.round(v);
-      }
+    if (this.level > 0.05 && flux > this._fluxAvg * this.sens + this.fluxFloor && flux > this._fluxPrev && nowMs - this.lastBeatMs > this.refractoryMs) {
+      this.lastBeatMs = nowMs; this.beats++; this.pulse = 1;
     }
     this._fluxPrev = flux;
+
+    // Dynamics: slow energy envelope + drop detection (a sharp surge of loudness
+    // above the recent baseline — the moment the bass slams back in).
+    this.energy += (this.level - this.energy) * 0.02;
+    this._eShort += (this.level - this._eShort) * 0.15;
+    this._eLong += (this.level - this._eLong) * 0.01;
+    if (this._eShort - this._eLong > 0.35 && this._eShort > 0.5 && nowMs - this._lastDrop > 3500) this._lastDrop = nowMs;
+    this.drop = nowMs - this._lastDrop < 2000 ? Math.exp(-(nowMs - this._lastDrop) / 450) : 0;
+
+    // Tempogram beat lock: push flux onto a fixed ~50 Hz time grid, autocorrelate
+    // a few times a second, and take the strongest lag in 60–180 BPM. Robust on
+    // busy music where inter-onset medians wobble.
+    this._fluxWin = Math.max(this._fluxWin, flux);
+    if (nowMs - this._lastPush >= 20) {
+      this._lastPush = nowMs;
+      this._fh.push(this._fluxWin); this._fht.push(nowMs); this._fluxWin = 0;
+      if (this._fh.length > 256) { this._fh.shift(); this._fht.shift(); }
+    }
+    if (nowMs - this._lastAc >= 500) { this._lastAc = nowMs; this._estTempo(); }
     return this;
   }
 
-  // Combined brightness drive for the show: beat flash over a music-tracking glow.
-  energy() { return Math.min(1, this.pulse * 0.85 + this.level * 0.5); }
+  _estTempo() {
+    const h = this._fh, ts = this._fht, n = h.length;
+    if (n < 100) return;
+    const pm = (ts[n - 1] - ts[0]) / (n - 1); // true average sample interval (ms)
+    if (!(pm > 0)) return;
+    const minLag = Math.max(4, Math.round(60000 / 180 / pm)); // 180 BPM
+    const maxLag = Math.min(n >> 1, Math.round(60000 / 60 / pm)); // 60 BPM
+    let bestLag = 0, best = 0;
+    for (let lag = minLag; lag <= maxLag; lag++) {
+      let s = 0; for (let i = lag; i < n; i++) s += h[i] * h[i - lag];
+      s /= n - lag; // normalize so longer lags aren't penalized
+      if (s > best) { best = s; bestLag = lag; }
+    }
+    if (!bestLag) return;
+    let v = 60000 / (bestLag * pm); // lag * measured push interval = beat period
+    while (v < 60) v *= 2; while (v > 180) v /= 2;
+    this.bpm = this.bpm ? Math.round(this.bpm * 0.7 + v * 0.3) : Math.round(v);
+  }
 }
 
 // ---------------------------------------------------------------------------

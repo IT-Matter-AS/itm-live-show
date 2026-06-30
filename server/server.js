@@ -282,6 +282,11 @@ wss.on('connection', (ws) => {
           period: Number(msg.period) || 500,
           level: Math.max(0, Math.min(1, Number(msg.level) || 0)),
           bpm: Number(msg.bpm) || 0,
+          energy: Math.max(0, Math.min(1, Number(msg.energy) || 0)),
+          drop: Math.max(0, Math.min(1, Number(msg.drop) || 0)),
+          bands: msg.bands && typeof msg.bands === 'object'
+            ? { bass: +msg.bands.bass || 0, mid: +msg.bands.mid || 0, treble: +msg.bands.treble || 0 }
+            : null,
         });
         break;
       case 'calib': // Beacon emit-latency calibration from a known-position phone.

@@ -227,5 +227,27 @@ const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}`); if
   ok(corr > 0.8, `depth tracks distance-from-source (r=${corr.toFixed(2)})`);
 }
 
+// --- Test 11: dynamics (energy + drop) and frequency bands --------------------
+{
+  const r = new AudioReactor();
+  const N = 256, dt = 1000 / 60;
+  let dropCount = 0, prevDrop = 0;
+  for (let f = 0; f < 360; f++) {           // 2 s quiet, then a loud bass-heavy "drop"
+    const t = f * dt;
+    const loud = t > 2000;
+    const rms = loud ? 0.3 : 0.02;
+    const freq = new Uint8Array(N);
+    for (let k = 1; k < 10; k++) freq[k] = loud ? 235 : 18;   // bass
+    for (let k = 10; k < 40; k++) freq[k] = loud ? 110 : 12;  // mids
+    // treble bins left low -> bass-heavy
+    r.update(rms, freq, t);
+    if (r.drop > 0.5 && prevDrop <= 0.5) dropCount++;
+    prevDrop = r.drop;
+  }
+  ok(r.energy > 0.4, `energy envelope rises in the loud section (${r.energy.toFixed(2)})`);
+  ok(dropCount === 1, `drop detected once at the jump (${dropCount})`);
+  ok(r.bands.bass > r.bands.treble + 0.2, `bands reflect bass-heavy content (bass ${r.bands.bass.toFixed(2)} vs treble ${r.bands.treble.toFixed(2)})`);
+}
+
 console.log(failures === 0 ? '\nALL TESTS PASSED' : `\n${failures} TEST(S) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
