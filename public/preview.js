@@ -138,7 +138,9 @@ function beginCapture(streamPromise, label, id) {
     listening = true; tapMode = false; markCap(id);
   }).catch((e) => {
     const n = e?.name || String(e);
-    capEl.textContent = n === 'NotAllowedError' ? 'permission denied — just use “tap tempo” (no permission needed)' : 'capture error: ' + n;
+    capEl.textContent = n === 'NotAllowedError'
+      ? 'no prompt = untrusted address or a remembered “deny”. Fix: open an incognito window, or reset the site’s mic in the address-bar icon — or just use 👆 tap tempo (no permission)'
+      : 'capture error: ' + n;
   });
 }
 document.getElementById('capTab').onclick = () => { ensureCtx(); beginCapture(navigator.mediaDevices?.getDisplayMedia?.({ video: true, audio: true }), 'tab/system audio', 'capTab'); };
