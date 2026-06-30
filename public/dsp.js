@@ -313,9 +313,17 @@ export class AudioReactor {
     // drops instantly to any new quiet minimum and creeps up slowly, so steady
     // room noise sits AT the floor (not "music"). Real sound rises well above it.
     // This is the silence gate — auto-gained `level` can't tell quiet from loud.
-    this._floor = rms < this._floor ? rms : this._floor + (rms - this._floor) * 0.0003;
+    // The floor drops INSTANTLY to any new quiet minimum, but only creeps UP while
+    // it's actually quiet (active low). Otherwise a steady loud song would slowly
+    // pull the floor up toward itself and, after ~15s, be mistaken for silence
+    // ("idle · quiet" mid-song). Freezing the upward creep during music pins the
+    // floor at the room's true noise level for the whole song.
+    if (rms < this._floor) this._floor = rms;
+    else if (this.active < 0.4) this._floor += (rms - this._floor) * 0.0003;
     const present = rms > this._floor * 4 + 0.004;
-    this.active += ((present ? 1 : 0) - this.active) * 0.08;
+    // Rise fast (music starts -> on within ~50ms), fall slow (a <~0.6s musical gap
+    // or soft passage doesn't flip the whole show to idle).
+    this.active += ((present ? 1 : 0) - this.active) * (present ? 0.15 : 0.03);
 
     // Frequency bands (bass / mid / treble), each auto-gained to 0..1, so color
     // can mirror the actual sound. Bands stop well below the ultrasonic beacons.

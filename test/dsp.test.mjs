@@ -86,6 +86,24 @@ const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}`); if
   }
   ok(beatsHeard >= 10 && beatsHeard <= 13, `flux reactor caught ${beatsHeard} beats (expected ~11-12)`);
   ok(r.bpmConfidence > 0.4, `steady 120 BPM reads as confident (conf ${(r.bpmConfidence * 100) | 0}%)`);
+
+  // Regression: a long, steady LOUD song must stay "present" the whole way through.
+  // The old noise floor crept up unconditionally and, after ~15s, mistook the music
+  // for silence ("idle · quiet" mid-song). The floor now freezes while music plays.
+  {
+    const rp = new AudioReactor(), N = 256;
+    let minActive = 1;
+    for (let f = 0; f < 2520; f++) {                 // 42s @ ~60fps
+      const t = f * 16.67, music = t >= 2000;        // 2s quiet to seed the floor, then 40s loud
+      const k = (t / 1000 % 0.5) < 0.05 ? 1 : 0;
+      const rms = music ? 0.14 + 0.05 * k : 0.02;
+      const fr = new Uint8Array(N);
+      for (let i = 1; i < 40; i++) fr[i] = music ? 30 + 200 * k : 3;
+      rp.update(rms, fr, t);
+      if (t >= 4000) minActive = Math.min(minActive, rp.active);   // after presence settles
+    }
+    ok(minActive > 0.3, `stays present through a 40s loud song (min active ${minActive.toFixed(2)})`);
+  }
   ok(r.bpm >= 110 && r.bpm <= 130, `tempo estimate ${r.bpm} BPM (~120)`);
   ok(maxLevel > 0.3, `level tracks loudness (peak ${maxLevel.toFixed(2)})`);
 }
