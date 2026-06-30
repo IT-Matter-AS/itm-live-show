@@ -318,6 +318,7 @@ wss.on('connection', (ws, req) => {
             : null,
           section: typeof msg.section === 'string' ? msg.section : null,
           active: Math.max(0, Math.min(1, Number(msg.active) || 0)), // presence (silence gate)
+          bpmConf: Math.max(0, Math.min(1, Number(msg.bpmConf) || 0)), // tempo steadiness
         });
         break;
       case 'calib': // Beacon emit-latency calibration from a known-position phone.

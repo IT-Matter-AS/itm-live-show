@@ -88,7 +88,7 @@ function onMessage(e) {
     if (m.speakers) speakers = m.speakers;
     if (m.offsets) beaconOffsets = m.offsets;
   } else if (m.type === 'depth') depthInfo = m;
-  else if (m.type === 'music') musicFeed = { beatAt: m.beatAt, period: m.period, level: m.level, energy: m.energy, drop: m.drop, bands: m.bands, section: m.section, at: Date.now() };
+  else if (m.type === 'music') musicFeed = { beatAt: m.beatAt, period: m.period, level: m.level, energy: m.energy, drop: m.drop, bands: m.bands, section: m.section, active: m.active, bpmConf: m.bpmConf, at: Date.now() };
 }
 function ping() { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'ping', t0: Date.now() })); }
 function burstPing(n = 12) { let i = 0; const tick = () => { if (i++ >= n) return; ping(); setTimeout(tick, 120); }; tick(); }
@@ -266,15 +266,22 @@ function loop() {
   // else reactive) > host demo beat.
   let pulse, level, energy = 1, drop = 0, bands = null;
   if (musicFresh) {
-    const ph = ((serverNow() - musicFeed.beatAt) % musicFeed.period + musicFeed.period) % musicFeed.period;
-    pulse = beatEnvelope(ph / 1000, musicFeed.period / 1000); level = musicFeed.level;
-    energy = musicFeed.energy ?? 1; drop = musicFeed.drop ?? 0; bands = musicFeed.bands; curFeed = 'central';
+    const period = musicFeed.period || 500, since = (serverNow() - musicFeed.beatAt) / 1000;
+    // Steady tempo -> predict the grid (tight). Complex/uncertain (e.g. Tool) ->
+    // react: flash from the last ACTUAL beat, following the real hits.
+    if ((musicFeed.bpmConf ?? 0) > 0.4) {
+      const phMs = (((since * 1000) % period) + period) % period;
+      pulse = beatEnvelope(phMs / 1000, period / 1000);
+    } else {
+      pulse = beatEnvelope(since, period / 1000);
+    }
+    level = musicFeed.level; energy = musicFeed.energy ?? 1; drop = musicFeed.drop ?? 0; bands = musicFeed.bands; curFeed = 'central';
   } else if (hearingMusic) {
     const sb = phase.sinceBeat(t);
-    const locked = reactor.bpm && performance.now() - lastOnsetMs < 1500 && sb != null;
-    pulse = locked ? beatEnvelope(sb, phase.period) : reactor.pulse;
+    const steady = (reactor.bpmConfidence ?? 0) > 0.4 && performance.now() - lastOnsetMs < 1500 && sb != null;
+    pulse = steady ? beatEnvelope(sb, phase.period) : reactor.pulse; // predict if steady, else react
     level = reactor.level; energy = reactor.energy; drop = reactor.drop; bands = reactor.bands;
-    curFeed = locked ? 'mic·lock' : 'mic';
+    curFeed = steady ? 'mic·lock' : 'mic';
   } else {
     const dt = (serverNow() - hostBeat.startAt) / 1000;
     const ph = ((dt % hostBeat.period) + hostBeat.period) % hostBeat.period;
@@ -333,7 +340,7 @@ function diagText() {
   L.push(`feel   : energy ${(reactor.energy * 100) | 0}%  drop ${(reactor.drop * 100) | 0}%  b/m/t ${(reactor.bands.bass * 100) | 0}/${(reactor.bands.mid * 100) | 0}/${(reactor.bands.treble * 100) | 0}`);
   L.push(`struct : ${reactor.section}  downbeat=slot${reactor.downbeatSlot}${powerSave ? '  [power-save]' : ''}`);
   L.push(`drive  : ${curFeed}${curFeed === 'central' ? ' (visualizer feed)' : ''}`);
-  L.push(`tempo  : local ${reactor.bpm || '-'}  shared ${sharedBpm || '-'} bpm`);
+  L.push(`tempo  : local ${reactor.bpm || '-'}  shared ${sharedBpm || '-'} bpm  conf ${(reactor.bpmConfidence * 100) | 0}% ${reactor.bpmConfidence > 0.4 ? '(predict)' : '(react)'}`);
   L.push(`clock  : ±${Number.isFinite(q) ? (q | 0) : '?'} ms`);
   L.push(`pos    : ${calPos ? 'CALIBRATING' : (rf ? 'ACOUSTIC' : 'sim')}  conf ${(realConf * 100) | 0}%`);
   if (realPos) L.push(`         (${realPos.x.toFixed(1)}, ${realPos.y.toFixed(1)}) m  in ${venue.width}x${venue.height}`);

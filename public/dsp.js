@@ -279,6 +279,7 @@ export class AudioReactor {
     this._eTrend = 0; this._beatCount = 0; this._bassSlots = [0, 0, 0, 0];
     this.beats = 0;
     this.bpm = null;
+    this.bpmConfidence = 0;  // 0..1 how steady/dominant the tempo is (low = complex music)
     this.lastBeatMs = -1e9;
     this.sens = opts.sens ?? 1.6;            // flux peak must exceed adaptive floor * this
     this.refractoryMs = opts.refractoryMs ?? 140;
@@ -385,13 +386,19 @@ export class AudioReactor {
     if (!(pm > 0)) return;
     const minLag = Math.max(4, Math.round(60000 / 180 / pm)); // 180 BPM
     const maxLag = Math.min(n >> 1, Math.round(60000 / 60 / pm)); // 60 BPM
-    let bestLag = 0, best = 0;
+    let bestLag = 0, best = 0, sum = 0, cnt = 0;
     for (let lag = minLag; lag <= maxLag; lag++) {
       let s = 0; for (let i = lag; i < n; i++) s += h[i] * h[i - lag];
       s /= n - lag; // normalize so longer lags aren't penalized
+      sum += s; cnt++;
       if (s > best) { best = s; bestLag = lag; }
     }
     if (!bestLag) return;
+    // Confidence = how dominant the peak is vs the average lag. Steady 4/4 -> sharp
+    // peak (high); odd-meter / dense music (Tool) -> flat field (low) -> go reactive.
+    const mean = sum / Math.max(1, cnt);
+    const conf = mean > 1e-9 ? Math.max(0, Math.min(1, (best / mean - 1) / 2)) : 0;
+    this.bpmConfidence += (conf - this.bpmConfidence) * 0.3;
     let v = 60000 / (bestLag * pm); // lag * measured push interval = beat period
     while (v < 60) v *= 2; while (v > 180) v /= 2;
     this.bpm = this.bpm ? Math.round(this.bpm * 0.7 + v * 0.3) : Math.round(v);

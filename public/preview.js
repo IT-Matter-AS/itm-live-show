@@ -168,8 +168,8 @@ document.getElementById('capTap').onclick = () => {
 // Broadcast the current beat feed to every phone (from capture or taps).
 function broadcastMusic() {
   if (!ws || ws.readyState !== 1) return;
-  if (listening) ws.send(JSON.stringify({ type: 'music', beatAt: lastBeatServer, period: 60000 / (reactor.bpm || 120), level: reactor.level, bpm: reactor.bpm || 0, energy: reactor.energy, drop: reactor.drop, bands: reactor.bands, section: reactor.section, active: reactor.active }));
-  else if (tapMode) ws.send(JSON.stringify({ type: 'music', beatAt: tapBeat, period: tapPeriod, level: 0.7, bpm: tapBpm, energy: 0.9, drop: 0, active: 1 }));
+  if (listening) ws.send(JSON.stringify({ type: 'music', beatAt: lastBeatServer, period: 60000 / (reactor.bpm || 120), level: reactor.level, bpm: reactor.bpm || 0, energy: reactor.energy, drop: reactor.drop, bands: reactor.bands, section: reactor.section, active: reactor.active, bpmConf: reactor.bpmConfidence }));
+  else if (tapMode) ws.send(JSON.stringify({ type: 'music', beatAt: tapBeat, period: tapPeriod, level: 0.7, bpm: tapBpm, energy: 0.9, drop: 0, active: 1, bpmConf: 1 }));
 }
 
 function sampleMusic() {

@@ -85,6 +85,7 @@ const ok = (cond, msg) => { console.log(`${cond ? 'PASS' : 'FAIL'}  ${msg}`); if
     maxLevel = Math.max(maxLevel, r.level);
   }
   ok(beatsHeard >= 10 && beatsHeard <= 13, `flux reactor caught ${beatsHeard} beats (expected ~11-12)`);
+  ok(r.bpmConfidence > 0.4, `steady 120 BPM reads as confident (conf ${(r.bpmConfidence * 100) | 0}%)`);
   ok(r.bpm >= 110 && r.bpm <= 130, `tempo estimate ${r.bpm} BPM (~120)`);
   ok(maxLevel > 0.3, `level tracks loudness (peak ${maxLevel.toFixed(2)})`);
 }
