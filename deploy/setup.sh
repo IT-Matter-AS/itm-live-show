@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # One-shot deploy of itm-live-show on a fresh Hetzner Cloud VPS (Ubuntu 22.04/24.04).
 # Gives you a REAL, browser-trusted HTTPS URL — no domain to buy, no cert warning
-# on phones — using Caddy + Let's Encrypt + a free <your-ip>.sslip.io hostname.
+# on phones — using Caddy + Let's Encrypt + a free <your-ip>.nip.io hostname.
 #
 # Usage (as root, from the repo root):
 #     bash deploy/setup.sh
@@ -22,7 +22,13 @@ if [ -z "$IP" ]; then
   echo "!! Could not detect the public IP. Re-run as:  PUBLIC_IP=1.2.3.4 bash deploy/setup.sh" >&2
   exit 1
 fi
-SITE_ADDRESS="${SITE_ADDRESS:-${IP}.sslip.io}"
+# Hostname for the real HTTPS cert. Precedence: explicit env > whatever a
+# previous run saved in deploy/.env > a free <ip>.nip.io wildcard name.
+# We default to nip.io rather than sslip.io because some ISP filters (e.g.
+# Telenor "Nettvern") block sslip.io. For production, point a real domain here:
+#   SITE_ADDRESS=show.example.com bash deploy/setup.sh
+PREV_SITE=""; [ -f deploy/.env ] && PREV_SITE="$(grep '^SITE_ADDRESS=' deploy/.env | head -1 | cut -d= -f2-)"
+SITE_ADDRESS="${SITE_ADDRESS:-${PREV_SITE:-${IP}.nip.io}}"
 
 # --- Docker (install if missing) ---------------------------------------------
 if ! command -v docker >/dev/null 2>&1; then

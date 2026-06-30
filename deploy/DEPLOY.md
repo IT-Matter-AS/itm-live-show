@@ -64,15 +64,21 @@ To change one, edit the `AUTH_USERS=` line in `deploy/.env` and
 ## 4. Send your friend the link
 
 ```
-https://91-99-12-34.sslip.io/preview
+https://91-99-12-34.nip.io/preview
 ```
 
 He opens it on his Mac, **signs in**, clicks **Capture music**, plays a song,
 and the on-screen **QR code** is what the crowd scans. Phones that scan it open
-`https://…sslip.io/`, sign in, and light up — no install, no cert warning.
-(`sslip.io` is just a free DNS trick that maps the name back to your server's IP
+`https://…nip.io/`, sign in, and light up — no install, no cert warning.
+(`nip.io` is just a free DNS trick that maps the name back to your server's IP
 so Let's Encrypt can issue a real cert — nothing to set up.) A signed-in user
 can control the show directly — no `?key=` needed.
+
+> **Note on wildcard-DNS blocking.** Some ISP filters (e.g. Telenor "Nettvern")
+> block `sslip.io`; we default to `nip.io`, which those filters generally allow.
+> If a network blocks `nip.io` too, the browser shows a cert error
+> (`ERR_CERT_COMMON_NAME_INVALID`) because the lookup is redirected to a block
+> page. The permanent fix is a real domain (see the bottom of this file).
 
 > **Real public show later?** Requiring every phone to sign in is great for a
 > private test but not for an open crowd. Run `OPEN_CROWD=1 bash deploy/setup.sh`
@@ -93,7 +99,7 @@ git pull && bash deploy/setup.sh                         # update to the latest
 The director key is saved in `deploy/.env`, so re-running `setup.sh` keeps the
 **same link**. To rotate it, delete that line (or set `HOST_KEY=…`) and re-run.
 
-## Use your own domain instead of sslip.io (optional)
+## Use your own domain instead of nip.io (optional)
 
 Point an `A` record at the server's IP, then:
 

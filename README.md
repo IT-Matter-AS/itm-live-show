@@ -68,7 +68,7 @@ some browsers). Easiest first:
   domain to buy** and **no cert warning** — give your non-technical friend a link
   and they just open it. See **[deploy/DEPLOY.md](deploy/DEPLOY.md)**: create a
   small Ubuntu server, then `git clone … && bash deploy/setup.sh`. Caddy fetches a
-  Let's Encrypt cert for a free `<ip>.sslip.io` name and proxies to the app.
+  Let's Encrypt cert for a free `<ip>.nip.io` name and proxies to the app.
 - **No install — VS Code port forwarding.** Run `npm start`, open the **Ports**
   panel → **Forward Port** `3000` → set **Visibility: Public** → open the
   `https://…devtunnels.ms` URL. Real cert, works on cellular, one action.
